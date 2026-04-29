@@ -1,10 +1,16 @@
 import {
+  InputRenderable,
   TextAttributes,
-  type InputRenderableOptions,
   type KeyEvent,
+  type SelectOption,
 } from "@opentui/core"
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { createElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react"
+import {
+  extend,
+  useKeyboard,
+  useRenderer,
+  useTerminalDimensions,
+} from "@opentui/react"
+import { createElement, useEffect, useMemo, useRef, useState } from "react"
 
 import {
   CodingAgentSession,
@@ -21,6 +27,20 @@ import {
 } from "../commands.js"
 import type { ModelSelection } from "@cursor/sdk"
 
+extend({ "tui-input": InputRenderable })
+
+type TuiInputProps = {
+  focused: boolean
+  placeholder: string
+  value: string
+  onInput: (value: string) => void
+  onSubmit: (value: string) => void
+}
+
+function TuiInput(props: TuiInputProps) {
+  return createElement("tui-input", props)
+}
+
 type TuiAppProps = {
   apiKey: string
   cwd: string
@@ -35,24 +55,16 @@ type TranscriptEntry = {
   text: string
 }
 
-type ModelSelectItem = {
+type SelectItem<TValue> = SelectOption & {
   key?: string
   name: string
   description: string
-  value: ModelSelection
+  value: TValue
 }
 
-type CommandSelectItem = {
-  key?: string
-  name: string
-  description: string
-  value: SlashCommandName
-}
+type ModelSelectItem = SelectItem<ModelSelection>
 
-type InputEventHandlers = {
-  onInput?: (value: string) => void
-  onSubmit?: (value: string) => void
-}
+type CommandSelectItem = SelectItem<SlashCommandName>
 
 type ModelPreference = {
   fast: boolean
@@ -60,15 +72,6 @@ type ModelPreference = {
 }
 
 type ViewMode = "command" | "input" | "model"
-
-type TuiInputProps = Omit<InputRenderableOptions, "onSubmit"> & {
-  focused?: boolean
-  onInput?: (value: string) => void
-  onSubmit?: (value: string) => void
-}
-
-const TuiInput = (props: TuiInputProps): ReactNode =>
-  createElement("input", props as Record<string, unknown>)
 
 export function App({ apiKey, cwd, force, initialModel }: TuiAppProps) {
   const renderer = useRenderer()
@@ -115,6 +118,17 @@ export function App({ apiKey, cwd, force, initialModel }: TuiAppProps) {
   useKeyboard((key) => {
     const character = getInputCharacter(key)
 
+    if (key.ctrl && key.name === "c") {
+      if (busy) {
+        if (!cancelRequested) {
+          void cancelActiveRun()
+        }
+      } else {
+        exitApp()
+      }
+      return
+    }
+
     if (mode === "model" && key.name === "escape") {
       setMode("input")
       return
@@ -137,18 +151,6 @@ export function App({ apiKey, cwd, force, initialModel }: TuiAppProps) {
     if (mode === "command" && key.name === "escape") {
       setInput("")
       setMode("input")
-      return
-    }
-
-    if (mode === "input" && busy && key.ctrl && key.name === "c") {
-      if (!cancelRequested) {
-        void cancelActiveRun()
-      }
-      return
-    }
-
-    if (mode === "input" && !busy && key.ctrl && key.name === "c") {
-      exitApp()
       return
     }
 
@@ -339,13 +341,15 @@ export function App({ apiKey, cwd, force, initialModel }: TuiAppProps) {
     void runCommand(item.value)
   }
 
-  const selectCommandOption = (_index: number, item: CommandSelectItem | null) => {
+  const selectCommandOption = (_index: number, option: SelectOption | null) => {
+    const item = toCommandSelectItem(option, commandItems)
     if (item) {
       selectCommand(item)
     }
   }
 
-  const selectModelOption = (_index: number, item: ModelSelectItem | null) => {
+  const selectModelOption = (_index: number, option: SelectOption | null) => {
+    const item = toModelSelectItem(option, filteredModelItems)
     if (item) {
       selectModel(item)
     }
@@ -503,11 +507,7 @@ export function App({ apiKey, cwd, force, initialModel }: TuiAppProps) {
             focused={mode === "command"}
             height={Math.min(6, Math.max(3, rows - 10))}
             options={commandItems}
-            onSelect={(_, item) => {
-              if (item) {
-                selectCommand(item as CommandSelectItem)
-              }
-            }}
+            onSelect={selectCommandOption}
             showDescription={false}
           />
         </box>
@@ -535,11 +535,7 @@ export function App({ apiKey, cwd, force, initialModel }: TuiAppProps) {
               focused={mode === "model"}
               height={Math.min(8, Math.max(3, rows - 10))}
               options={filteredModelItems}
-              onSelect={(_, item) => {
-                if (item) {
-                  selectModel(item as ModelSelectItem)
-                }
-              }}
+              onSelect={selectModelOption}
               showScrollIndicator
             />
           )}
@@ -1014,7 +1010,7 @@ function getErrorMessage(error: unknown) {
 }
 
 function modelKey(choice: ModelChoice) {
-  return JSON.stringify(choice.value)
+  return modelKeyFromSelection(choice.value)
 }
 
 function filterModelItems(
@@ -1115,6 +1111,63 @@ function selectionSearchText(selection: ModelSelection) {
     selection.id,
     ...(selection.params ?? []).flatMap((param) => [param.id, param.value]),
   ].join(" ")
+}
+
+function toCommandSelectItem(
+  option: SelectOption | null,
+  items: CommandSelectItem[]
+) {
+  if (!option) {
+    return undefined
+  }
+
+  return items.find((item) => item.value === option.value)
+}
+
+function toModelSelectItem(option: SelectOption | null, items: ModelSelectItem[]) {
+  if (!option) {
+    return undefined
+  }
+
+  return items.find((item) => modelSelectionEquals(item.value, option.value))
+}
+
+function modelSelectionEquals(left: ModelSelection, right: unknown) {
+  return isModelSelection(right) && modelKeyFromSelection(left) === modelKeyFromSelection(right)
+}
+
+function modelKeyFromSelection(selection: ModelSelection) {
+  return JSON.stringify({
+    id: selection.id,
+    params: [...(selection.params ?? [])].sort((left, right) =>
+      left.id.localeCompare(right.id)
+    ),
+  })
+}
+
+function isModelSelection(value: unknown): value is ModelSelection {
+  if (!hasStringProperty(value, "id")) {
+    return false
+  }
+
+  if (!("params" in value)) {
+    return true
+  }
+
+  const params = value.params
+  return (
+    params === undefined ||
+    (Array.isArray(params) &&
+      params.every((param) => hasStringProperty(param, "id") && hasStringProperty(param, "value")))
+  )
+}
+
+function hasStringProperty<K extends string>(value: unknown, key: K): value is Record<K, string> {
+  if (typeof value !== "object" || value === null || !(key in value)) {
+    return false
+  }
+
+  return typeof Object.getOwnPropertyDescriptor(value, key)?.value === "string"
 }
 
 function getInputCharacter(key: KeyEvent) {

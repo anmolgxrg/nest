@@ -4,8 +4,8 @@ A small example CLI that runs a Cursor SDK agent against a workspace. One-shot p
 
 ## Getting Started
 
-Use Bun 1.3 or newer. OpenTUI's native renderer is exposed through `bun:ffi`,
-so the interactive CLI must run on Bun.
+Use Bun 1.3 or newer. This CLI is Bun-only because OpenTUI's native renderer
+is exposed through `bun:ffi`.
 
 Install dependencies:
 

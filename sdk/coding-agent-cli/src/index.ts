@@ -59,15 +59,23 @@ async function main() {
   })
   const root = createRoot(renderer)
 
-  root.render(
-    React.createElement(App, {
-      apiKey,
-      cwd: options.cwd,
-      force: options.force,
-      initialModel: { id: options.model },
-    })
-  )
-  await waitUntilDestroyed(renderer)
+  try {
+    root.render(
+      React.createElement(App, {
+        apiKey,
+        cwd: options.cwd,
+        force: options.force,
+        initialModel: { id: options.model },
+      })
+    )
+    await waitUntilDestroyed(renderer)
+  } finally {
+    root.unmount()
+
+    if (!renderer.isDestroyed) {
+      renderer.destroy()
+    }
+  }
 }
 
 function parseArgs(argv: string[]): CliOptions {
