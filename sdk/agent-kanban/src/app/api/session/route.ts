@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
     return jsonSession(await restoreSession(body.sessionId?.trim()), request)
   } catch (error) {
-    return jsonError(error, "Failed to create an Agent Kanban session.")
+    return jsonError(error, "Failed to create an SDM NEST session.")
   }
 }
 

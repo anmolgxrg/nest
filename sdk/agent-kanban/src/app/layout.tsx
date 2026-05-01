@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Agent Kanban",
+  title: "SDM NEST",
   description: "A Linear-style board for Cursor Cloud Agents",
 }
 
