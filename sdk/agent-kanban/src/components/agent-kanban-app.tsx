@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { AgentDetailsDialog } from "@/components/agent-details-dialog"
 import { Textarea } from "@/components/ui/textarea"
 import type {
   AgentCard,
@@ -132,6 +133,9 @@ export function AgentKanbanApp() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
+  const [selectedAgent, setSelectedAgent] = React.useState<AgentCard | null>(
+    null,
+  )
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false)
 
   const loadBoard = React.useCallback(async (sessionId: string) => {
@@ -451,6 +455,7 @@ export function AgentKanbanApp() {
                     title={group.title}
                     icon={selectedGroupOption?.icon ?? CirclesFourIcon}
                     agents={group.agents}
+                    onSelect={setSelectedAgent}
                   />
                 ))
               ) : showBoardLoading ? (
@@ -470,6 +475,14 @@ export function AgentKanbanApp() {
           repositories={repositories}
           onClose={() => setIsCreateOpen(false)}
           onCreated={handleAgentCreated}
+        />
+      ) : null}
+
+      {selectedAgent ? (
+        <AgentDetailsDialog
+          agent={selectedAgent}
+          sessionId={session.id}
+          onClose={() => setSelectedAgent(null)}
         />
       ) : null}
     </div>
@@ -581,10 +594,12 @@ function BoardColumn({
   title,
   icon: Icon,
   agents,
+  onSelect,
 }: {
   title: string
   icon: IconComponent
   agents: AgentCard[]
+  onSelect?: (agent: AgentCard) => void
 }) {
   return (
     <section className="flex w-80 shrink-0 flex-col rounded-xl bg-muted/20">
@@ -597,7 +612,7 @@ function BoardColumn({
       </header>
       <div className="flex flex-col gap-2 p-2">
         {agents.map((agent) => (
-          <AgentCardPreview key={agent.id} agent={agent} />
+          <AgentCardPreview key={agent.id} agent={agent} onSelect={onSelect} />
         ))}
       </div>
     </section>
@@ -725,14 +740,33 @@ function GroupOptionContent({ option }: { option: SelectableGroupOption }) {
   )
 }
 
-function AgentCardPreview({ agent }: { agent: AgentCard }) {
+function AgentCardPreview({
+  agent,
+  onSelect,
+}: {
+  agent: AgentCard
+  onSelect?: (agent: AgentCard) => void
+}) {
   const previewArtifact = getPreviewArtifact(agent.artifacts)
   const hasCardContent = Boolean(agent.latestMessage || previewArtifact)
 
   return (
     <Card
       size="sm"
-      className="gap-3 bg-card/70 ring-border/60 transition-colors hover:bg-card/90"
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={onSelect ? () => onSelect(agent) : undefined}
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onSelect(agent)
+              }
+            }
+          : undefined
+      }
+      className="cursor-pointer gap-3 bg-card/70 ring-border/60 transition-colors hover:bg-card/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <CardHeader className="gap-2">
         <div className="flex items-start justify-between gap-3">
