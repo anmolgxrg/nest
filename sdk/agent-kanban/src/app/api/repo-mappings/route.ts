@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic"
  * The browser hits *this* route (no auth, same-origin), and we forward to
  * the bridge with BRIDGE_ADMIN_TOKEN attached. That keeps the secret off
  * the client and lets us add UI-level auth here later (e.g. only allow
- * authenticated SDM NEST sessions to manage routing).
+ * authenticated NEST sessions to manage routing).
  */
 export async function GET() {
   const cfg = loadBridgeConfig()

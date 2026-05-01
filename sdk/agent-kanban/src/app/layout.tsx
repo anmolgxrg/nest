@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "SDM NEST",
+  title: "NEST",
   description: "Multi-agent control plane",
 }
 

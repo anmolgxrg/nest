@@ -286,7 +286,7 @@ export function AgentKanbanApp() {
                 <KanbanIcon aria-hidden="true" className="size-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">SDM NEST</div>
+                <div className="truncate text-sm font-semibold">NEST</div>
               </div>
               <Button
                 variant="ghost"
@@ -508,7 +508,7 @@ function LoadingScreen() {
     <div className="flex min-h-screen items-center justify-center bg-background">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Loading SDM NEST</CardTitle>
+          <CardTitle>Loading NEST</CardTitle>
           <CardDescription>Checking for a saved Cursor API key.</CardDescription>
         </CardHeader>
       </Card>

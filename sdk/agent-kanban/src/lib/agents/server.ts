@@ -110,7 +110,7 @@ export class InvalidCursorApiKeyError extends Error {
 export class UnknownSessionError extends Error {
   readonly code = "unknown_session"
 
-  constructor(message = "This SDM NEST session has expired.") {
+  constructor(message = "This NEST session has expired.") {
     super(message)
     this.name = "UnknownSessionError"
   }
