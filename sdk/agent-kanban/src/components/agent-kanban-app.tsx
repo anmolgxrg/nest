@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import {
   ArrowClockwiseIcon,
   CaretLeftIcon,
@@ -318,6 +319,22 @@ export function AgentKanbanApp() {
               onSelect={() => setSidebarFilter(item.id)}
             />
           ))}
+          <Link
+            href="/routing"
+            aria-label={isSidebarCollapsed ? "Routing" : undefined}
+            title={isSidebarCollapsed ? "Routing" : undefined}
+            className={cn(
+              "relative mt-2 flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
+              isSidebarCollapsed
+                ? "size-11 justify-center p-0"
+                : "px-2 py-1.5 text-left text-sm",
+            )}
+          >
+            <GitBranchIcon aria-hidden="true" />
+            {!isSidebarCollapsed ? (
+              <span className="flex-1 truncate">Routing</span>
+            ) : null}
+          </Link>
         </nav>
         <Separator />
         {isSidebarCollapsed ? (
