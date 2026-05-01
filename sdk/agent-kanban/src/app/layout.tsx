@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "SDM NEST",
-  description: "A Linear-style board for Cursor Cloud Agents",
+  description: "Multi-agent control plane",
 }
 
 export default function RootLayout({

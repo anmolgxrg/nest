@@ -286,9 +286,6 @@ export function AgentKanbanApp() {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">SDM NEST</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  Cursor Cloud Agents
-                </div>
               </div>
               <Button
                 variant="ghost"
