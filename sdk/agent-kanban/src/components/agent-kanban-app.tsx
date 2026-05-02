@@ -68,7 +68,62 @@ type SelectableGroupOption = GroupOption & {
   selectable: boolean
 }
 
-type SidebarFilter = "all" | "withArtifacts" | "prAgents" | "recentlyActive"
+type SidebarFilter =
+  | "all"
+  | "withArtifacts"
+  | "prAgents"
+  | "recentlyActive"
+  | "sdms"
+
+interface ChaosRepo {
+  owner: string
+  name: string
+  url: string
+  jiraProjectKey: string | null
+}
+
+/**
+ * Statuses we treat as "this agent is no longer running" — used to bucket
+ * the SDMs view down to in-flight work only. Permissive on unknowns: a
+ * status the team's never seen before stays visible rather than silently
+ * disappearing from the board.
+ */
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "complete",
+  "done",
+  "finished",
+  "failed",
+  "error",
+  "errored",
+  "cancelled",
+  "canceled",
+  "expired",
+  "stopped",
+  "aborted",
+])
+
+function isAgentActive(status: string | undefined) {
+  if (!status) return false
+  return !TERMINAL_STATUSES.has(status.trim().toLowerCase())
+}
+
+function repoMatchesAgent(repo: ChaosRepo, agent: AgentCard): boolean {
+  const target = `${repo.owner}/${repo.name}`.toLowerCase()
+  const candidates: string[] = []
+  if (agent.repository) candidates.push(agent.repository.toLowerCase().trim())
+  if (agent.repositoryUrl)
+    candidates.push(agent.repositoryUrl.toLowerCase().trim())
+
+  for (const c of candidates) {
+    if (!c) continue
+    if (c === target) return true
+    const m = c.match(/github\.com[:/]([^/]+)\/([^/.]+)/)
+    if (m && `${m[1]}/${m[2]}` === target) return true
+    if (c === repo.name.toLowerCase()) return true
+  }
+  return false
+}
 
 type AppStatus = "checking" | "onboarding" | "ready"
 
@@ -104,6 +159,7 @@ const sidebarFilters: {
   { id: "withArtifacts", label: "With artifacts", icon: ImageSquareIcon },
   { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
   { id: "recentlyActive", label: "Recently active", icon: ClockIcon },
+  { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
 ]
 
 const boardLoadingColumns: {
@@ -139,6 +195,10 @@ export function AgentKanbanApp() {
     null,
   )
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false)
+  const [chaosRepos, setChaosRepos] = React.useState<ChaosRepo[]>([])
+  const [chaosReposError, setChaosReposError] = React.useState<string | null>(
+    null,
+  )
 
   const loadBoard = React.useCallback(async (sessionId: string) => {
     setIsLoading(true)
@@ -193,6 +253,35 @@ export function AgentKanbanApp() {
       cancelled = true
     }
   }, [loadBoard])
+
+  // Lazy-load the chaos repo list the first time the user opens the SDMs
+  // view. We refresh once per visit (the list rarely changes day-to-day,
+  // and the agent list polling drives the live view).
+  React.useEffect(() => {
+    if (sidebarFilter !== "sdms") return
+    if (chaosRepos.length > 0) return
+    let cancelled = false
+    fetch("/api/sdms-repos", { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) {
+          const j = (await r.json().catch(() => ({}))) as ApiError
+          throw new Error(j.error ?? `HTTP ${r.status}`)
+        }
+        return (await r.json()) as { repos: ChaosRepo[] }
+      })
+      .then((j) => {
+        if (cancelled) return
+        setChaosRepos(j.repos)
+        setChaosReposError(null)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setChaosReposError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sidebarFilter, chaosRepos.length])
 
   async function handleSessionCreated(nextSession: PublicSession) {
     window.localStorage.setItem(sessionStorageKey, nextSession.id)
@@ -250,7 +339,10 @@ export function AgentKanbanApp() {
   }))
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupBy)
   const SelectedGroupIcon = selectedGroupOption?.icon
-  const groups = groupAgents(visibleAgents, selectedGroupBy)
+  const isSdmsView = sidebarFilter === "sdms"
+  const groups = isSdmsView
+    ? []
+    : groupAgents(visibleAgents, selectedGroupBy)
   const signedInName = session.user?.name ?? "Cursor user"
   const signedInLabel = session.user?.email
     ? `${signedInName} (${session.user.email})`
@@ -321,27 +413,11 @@ export function AgentKanbanApp() {
             />
           ))}
           <Link
-            href="/sdms"
-            aria-label={isSidebarCollapsed ? "SDMs" : undefined}
-            title={isSidebarCollapsed ? "SDMs" : undefined}
-            className={cn(
-              "relative mt-2 flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
-              isSidebarCollapsed
-                ? "size-11 justify-center p-0"
-                : "px-2 py-1.5 text-left text-sm",
-            )}
-          >
-            <UsersThreeIcon aria-hidden="true" />
-            {!isSidebarCollapsed ? (
-              <span className="flex-1 truncate">SDMs</span>
-            ) : null}
-          </Link>
-          <Link
             href="/routing"
             aria-label={isSidebarCollapsed ? "Routing" : undefined}
             title={isSidebarCollapsed ? "Routing" : undefined}
             className={cn(
-              "relative flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
+              "relative mt-2 flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
               isSidebarCollapsed
                 ? "size-11 justify-center p-0"
                 : "px-2 py-1.5 text-left text-sm",
@@ -406,43 +482,45 @@ export function AgentKanbanApp() {
             />
           </div>
 
-          <Select
-            items={selectableGroupOptions.map((option) => ({
-              label: groupOptionLabel(option),
-              value: option.id,
-            }))}
-            value={selectedGroupBy}
-            onValueChange={(value) => {
-              if (isSelectableGroupBy(value, selectableGroupOptions)) {
-                setGroupBy(value)
-              } else {
-                setGroupBy(defaultGroupBy)
-              }
-            }}
-          >
-            <SelectTrigger aria-label="Group agents" size="sm">
-              {SelectedGroupIcon ? (
-                <SelectedGroupIcon
-                  aria-hidden="true"
-                  className="text-muted-foreground"
-                />
-              ) : null}
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectGroup>
-                {selectableGroupOptions.map((option) => (
-                  <SelectItem
-                    key={option.id}
-                    value={option.id}
-                    disabled={!option.selectable}
-                  >
-                    <GroupOptionContent option={option} />
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+          {isSdmsView ? null : (
+            <Select
+              items={selectableGroupOptions.map((option) => ({
+                label: groupOptionLabel(option),
+                value: option.id,
+              }))}
+              value={selectedGroupBy}
+              onValueChange={(value) => {
+                if (isSelectableGroupBy(value, selectableGroupOptions)) {
+                  setGroupBy(value)
+                } else {
+                  setGroupBy(defaultGroupBy)
+                }
+              }}
+            >
+              <SelectTrigger aria-label="Group agents" size="sm">
+                {SelectedGroupIcon ? (
+                  <SelectedGroupIcon
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
+                ) : null}
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectGroup>
+                  {selectableGroupOptions.map((option) => (
+                    <SelectItem
+                      key={option.id}
+                      value={option.id}
+                      disabled={!option.selectable}
+                    >
+                      <GroupOptionContent option={option} />
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          )}
 
           <div className="hidden shrink-0 items-center gap-2 text-xs text-muted-foreground xl:flex">
             <span>{visibleAgents.length} shown</span>
@@ -479,7 +557,14 @@ export function AgentKanbanApp() {
         <section className="flex min-h-0 flex-1 flex-col">
           <ScrollArea className="min-h-0 flex-1">
             <div className="flex min-h-full gap-3 p-4">
-              {groups.length > 0 ? (
+              {isSdmsView ? (
+                <SdmsBoardColumns
+                  repos={chaosRepos}
+                  reposError={chaosReposError}
+                  agents={visibleAgents}
+                  onSelect={setSelectedAgent}
+                />
+              ) : groups.length > 0 ? (
                 groups.map((group) => (
                   <BoardColumn
                     key={group.id}
@@ -644,6 +729,144 @@ function BoardColumn({
       <div className="flex flex-col gap-2 p-2">
         {agents.map((agent) => (
           <AgentCardPreview key={agent.id} agent={agent} onSelect={onSelect} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * SDMs view: one column per chaos repo (in sources.yaml order), populated
+ * with the active agents whose repository matches. Empty repo columns
+ * are kept visible so it's obvious which repos have nothing in flight.
+ * Anything unmatched falls into a dashed "Other" column rather than being
+ * silently dropped.
+ */
+function SdmsBoardColumns({
+  repos,
+  reposError,
+  agents,
+  onSelect,
+}: {
+  repos: ChaosRepo[]
+  reposError: string | null
+  agents: AgentCard[]
+  onSelect: (a: AgentCard) => void
+}) {
+  if (reposError && repos.length === 0) {
+    return (
+      <div className="m-4 flex-1 self-start rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="font-medium">Could not load repo list from chaos</div>
+        <div className="mt-0.5 text-xs opacity-80">{reposError}</div>
+      </div>
+    )
+  }
+  if (repos.length === 0) {
+    return (
+      <div className="m-4 text-sm text-muted-foreground">loading repos…</div>
+    )
+  }
+
+  const buckets = new Map<string, AgentCard[]>()
+  for (const r of repos) buckets.set(`${r.owner}/${r.name}`, [])
+  const other: AgentCard[] = []
+  for (const a of agents) {
+    const r = repos.find((rp) => repoMatchesAgent(rp, a))
+    if (r) buckets.get(`${r.owner}/${r.name}`)!.push(a)
+    else other.push(a)
+  }
+
+  return (
+    <>
+      {repos.map((repo) => (
+        <SdmsRepoColumn
+          key={`${repo.owner}/${repo.name}`}
+          repo={repo}
+          agents={buckets.get(`${repo.owner}/${repo.name}`) ?? []}
+          onSelect={onSelect}
+        />
+      ))}
+      {other.length > 0 ? (
+        <SdmsOtherColumn agents={other} onSelect={onSelect} />
+      ) : null}
+    </>
+  )
+}
+
+function SdmsRepoColumn({
+  repo,
+  agents,
+  onSelect,
+}: {
+  repo: ChaosRepo
+  agents: AgentCard[]
+  onSelect: (a: AgentCard) => void
+}) {
+  return (
+    <section className="flex w-80 shrink-0 flex-col rounded-xl bg-muted/20">
+      <header className="flex items-center justify-between gap-2 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <KanbanIcon
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+          <h2
+            className="truncate text-sm font-medium"
+            title={`${repo.owner}/${repo.name}`}
+          >
+            {repo.name}
+          </h2>
+          {repo.jiraProjectKey ? (
+            <span
+              className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              title={`Jira project ${repo.jiraProjectKey}`}
+            >
+              {repo.jiraProjectKey}
+            </span>
+          ) : null}
+        </div>
+        <Badge variant="secondary">{agents.length}</Badge>
+      </header>
+      <div className="flex flex-col gap-2 p-2">
+        {agents.length === 0 ? (
+          <p className="px-1 py-3 text-center text-[11px] italic text-muted-foreground/70">
+            no active agents
+          </p>
+        ) : (
+          agents.map((a) => (
+            <AgentCardPreview key={a.id} agent={a} onSelect={onSelect} />
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SdmsOtherColumn({
+  agents,
+  onSelect,
+}: {
+  agents: AgentCard[]
+  onSelect: (a: AgentCard) => void
+}) {
+  return (
+    <section className="flex w-80 shrink-0 flex-col rounded-xl border border-dashed bg-muted/10">
+      <header className="flex items-center justify-between gap-2 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <GitBranchIcon
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+          <h2 className="truncate text-sm font-medium">Other</h2>
+          <span className="text-[11px] text-muted-foreground">
+            not in chaos
+          </span>
+        </div>
+        <Badge variant="outline">{agents.length}</Badge>
+      </header>
+      <div className="flex flex-col gap-2 p-2">
+        {agents.map((a) => (
+          <AgentCardPreview key={a.id} agent={a} onSelect={onSelect} />
         ))}
       </div>
     </section>
@@ -1255,6 +1478,10 @@ function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
 
   if (filter === "recentlyActive") {
     return agents.filter((agent) => isRecentlyActive(agent.updatedAt ?? agent.createdAt))
+  }
+
+  if (filter === "sdms") {
+    return agents.filter((agent) => isAgentActive(agent.status))
   }
 
   return agents

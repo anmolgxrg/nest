@@ -2,16 +2,13 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * Server-side proxy to chaos's /api/repos endpoint.
+ * Server-side proxy to chaos's /api/repos. Chaos owns the canonical
+ * company repo list (config/sources.yaml); we mirror it through here so
+ * the chaos URL stays config-driven (CHAOS_URL) and the page never sees
+ * a stub failure due to one transient blip.
  *
- * Chaos owns the canonical company repo list (config/sources.yaml), and the
- * NEST SDMs page renders it as kanban columns. We proxy here rather than
- * hitting chaos directly from the browser so:
- *   1. Chaos URL is config-driven (CHAOS_URL env), not baked into client.
- *   2. We can short-circuit a stable response if chaos is briefly down.
- *
- * Response shape (matches chaos /api/repos):
- *   { repos: [{ owner, name, url, jiraProjectKey | null }] }
+ * Strategy: try once, retry once on network/5xx errors. Good enough for
+ * the dashboard refresh cadence; anything chronic surfaces as a 502.
  */
 
 const DEFAULT_CHAOS_URL = "https://chaos.reasoning.company"
@@ -21,19 +18,27 @@ export async function GET() {
     /\/$/,
     "",
   )
+  const target = `${chaosUrl}/api/repos`
 
-  try {
-    const resp = await fetch(`${chaosUrl}/api/repos`, { cache: "no-store" })
-    if (!resp.ok) {
-      return Response.json(
-        { error: `Chaos ${resp.status}` },
-        { status: 502 },
-      )
+  let lastError = ""
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(target, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000),
+      })
+      if (resp.ok) {
+        const json = await resp.json()
+        return Response.json(json)
+      }
+      lastError = `Chaos ${resp.status}`
+      // Don't retry 4xx — chaos said no for a reason.
+      if (resp.status < 500) break
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e)
     }
-    const json = await resp.json()
-    return Response.json(json)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return Response.json({ error: msg }, { status: 502 })
   }
+
+  console.error(`[sdms-repos] proxy failed after retries: ${lastError}`)
+  return Response.json({ error: lastError }, { status: 502 })
 }
