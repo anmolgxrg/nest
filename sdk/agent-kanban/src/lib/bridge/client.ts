@@ -5,12 +5,14 @@ import "server-only"
  *
  * Lives behind Next.js API routes so the BRIDGE_ADMIN_TOKEN never reaches
  * the browser. The bridge URL is read from BRIDGE_URL on every call so
- * docker-compose env changes take effect on next request without needing
- * a Next rebuild.
+ * env changes take effect on next request without a rebuild.
  */
-export interface RepoMapping {
-  jira_project_key: string
-  repo_url: string
+export interface Repo {
+  id: number
+  owner: string
+  name: string
+  url: string
+  jira_project_key: string | null
   description: string | null
   created_at: string
   updated_at: string
@@ -80,37 +82,39 @@ export class BridgeError extends Error {
   }
 }
 
-export async function listMappings(cfg: BridgeConfigOk): Promise<RepoMapping[]> {
-  const r = await request<{ mappings: RepoMapping[] }>(cfg, "/api/repo-mappings")
-  return r.mappings
+export async function listRepos(cfg: BridgeConfigOk): Promise<Repo[]> {
+  const r = await request<{ repos: Repo[] }>(cfg, "/api/repos")
+  return r.repos
 }
 
-export async function upsertMapping(
+export async function upsertRepo(
   cfg: BridgeConfigOk,
-  input: { jira_project_key: string; repo_url: string; description?: string | null },
-): Promise<RepoMapping> {
-  const r = await request<{ mapping: RepoMapping }>(
-    cfg,
-    `/api/repo-mappings/${encodeURIComponent(input.jira_project_key)}`,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        repo_url: input.repo_url,
-        description: input.description ?? null,
-      }),
-    },
-  )
-  return r.mapping
+  input: {
+    url: string
+    jira_project_key?: string | null
+    description?: string | null
+    id?: number
+  },
+): Promise<Repo> {
+  const path = input.id ? `/api/repos/${input.id}` : "/api/repos"
+  const method = input.id ? "PUT" : "POST"
+  const r = await request<{ repo: Repo }>(cfg, path, {
+    method,
+    body: JSON.stringify({
+      url: input.url,
+      jira_project_key: input.jira_project_key ?? null,
+      description: input.description ?? null,
+    }),
+  })
+  return r.repo
 }
 
-export async function deleteMapping(
+export async function deleteRepo(
   cfg: BridgeConfigOk,
-  projectKey: string,
+  id: number,
 ): Promise<boolean> {
-  const r = await request<{ removed: boolean }>(
-    cfg,
-    `/api/repo-mappings/${encodeURIComponent(projectKey)}`,
-    { method: "DELETE" },
-  )
+  const r = await request<{ removed: boolean }>(cfg, `/api/repos/${id}`, {
+    method: "DELETE",
+  })
   return r.removed
 }

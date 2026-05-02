@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
 import {
   ArrowClockwiseIcon,
   CaretLeftIcon,
@@ -74,12 +73,17 @@ type SidebarFilter =
   | "prAgents"
   | "recentlyActive"
   | "sdms"
+  | "routing"
 
-interface ChaosRepo {
+interface Repo {
+  id: number
   owner: string
   name: string
   url: string
-  jiraProjectKey: string | null
+  jira_project_key: string | null
+  description: string | null
+  created_at: string
+  updated_at: string
 }
 
 /**
@@ -108,7 +112,7 @@ function isAgentActive(status: string | undefined) {
   return !TERMINAL_STATUSES.has(status.trim().toLowerCase())
 }
 
-function repoMatchesAgent(repo: ChaosRepo, agent: AgentCard): boolean {
+function repoMatchesAgent(repo: Repo, agent: AgentCard): boolean {
   const target = `${repo.owner}/${repo.name}`.toLowerCase()
   const candidates: string[] = []
   if (agent.repository) candidates.push(agent.repository.toLowerCase().trim())
@@ -160,6 +164,7 @@ const sidebarFilters: {
   { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
   { id: "recentlyActive", label: "Recently active", icon: ClockIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
+  { id: "routing", label: "Routing", icon: GitBranchIcon },
 ]
 
 const boardLoadingColumns: {
@@ -195,10 +200,9 @@ export function AgentKanbanApp() {
     null,
   )
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false)
-  const [chaosRepos, setChaosRepos] = React.useState<ChaosRepo[]>([])
-  const [chaosReposError, setChaosReposError] = React.useState<string | null>(
-    null,
-  )
+  const [repos, setRepos] = React.useState<Repo[]>([])
+  const [reposError, setReposError] = React.useState<string | null>(null)
+  const [reposLoading, setReposLoading] = React.useState(false)
 
   const loadBoard = React.useCallback(async (sessionId: string) => {
     setIsLoading(true)
@@ -254,34 +258,34 @@ export function AgentKanbanApp() {
     }
   }, [loadBoard])
 
-  // Lazy-load the chaos repo list the first time the user opens the SDMs
-  // view. We refresh once per visit (the list rarely changes day-to-day,
-  // and the agent list polling drives the live view).
-  React.useEffect(() => {
-    if (sidebarFilter !== "sdms") return
-    if (chaosRepos.length > 0) return
-    let cancelled = false
-    fetch("/api/sdms-repos", { cache: "no-store" })
-      .then(async (r) => {
-        if (!r.ok) {
-          const j = (await r.json().catch(() => ({}))) as ApiError
-          throw new Error(j.error ?? `HTTP ${r.status}`)
-        }
-        return (await r.json()) as { repos: ChaosRepo[] }
-      })
-      .then((j) => {
-        if (cancelled) return
-        setChaosRepos(j.repos)
-        setChaosReposError(null)
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setChaosReposError(e instanceof Error ? e.message : String(e))
-      })
-    return () => {
-      cancelled = true
+  const loadRepos = React.useCallback(async () => {
+    setReposLoading(true)
+    try {
+      const r = await fetch("/api/repos", { cache: "no-store" })
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as ApiError
+        throw new Error(j.error ?? `HTTP ${r.status}`)
+      }
+      const json = (await r.json()) as { repos: Repo[] }
+      setRepos(json.repos)
+      setReposError(null)
+    } catch (e) {
+      setReposError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReposLoading(false)
     }
-  }, [sidebarFilter, chaosRepos.length])
+  }, [])
+
+  // Lazy-load the repo list the first time the user opens any repo-driven
+  // view (SDMs or Routing). They share the same source of truth — the
+  // bridge — so a single fetch hydrates both.
+  React.useEffect(() => {
+    const repoView =
+      sidebarFilter === "sdms" || sidebarFilter === "routing"
+    if (!repoView) return
+    if (repos.length > 0 || reposLoading) return
+    void loadRepos()
+  }, [sidebarFilter, repos.length, reposLoading, loadRepos])
 
   async function handleSessionCreated(nextSession: PublicSession) {
     window.localStorage.setItem(sessionStorageKey, nextSession.id)
@@ -335,12 +339,17 @@ export function AgentKanbanApp() {
   const showBoardLoading = isLoading && agents.length === 0 && visibleAgents.length === 0
   const sidebarItems = sidebarFilters.map((item) => ({
     ...item,
-    count: filterAgentsBySidebar(searchedAgents, item.id).length,
+    count:
+      item.id === "routing"
+        ? repos.length
+        : filterAgentsBySidebar(searchedAgents, item.id).length,
   }))
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupBy)
   const SelectedGroupIcon = selectedGroupOption?.icon
   const isSdmsView = sidebarFilter === "sdms"
-  const groups = isSdmsView
+  const isRoutingView = sidebarFilter === "routing"
+  const isReposView = isSdmsView || isRoutingView
+  const groups = isReposView
     ? []
     : groupAgents(visibleAgents, selectedGroupBy)
   const signedInName = session.user?.name ?? "Cursor user"
@@ -412,22 +421,6 @@ export function AgentKanbanApp() {
               onSelect={() => setSidebarFilter(item.id)}
             />
           ))}
-          <Link
-            href="/routing"
-            aria-label={isSidebarCollapsed ? "Routing" : undefined}
-            title={isSidebarCollapsed ? "Routing" : undefined}
-            className={cn(
-              "relative mt-2 flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
-              isSidebarCollapsed
-                ? "size-11 justify-center p-0"
-                : "px-2 py-1.5 text-left text-sm",
-            )}
-          >
-            <GitBranchIcon aria-hidden="true" />
-            {!isSidebarCollapsed ? (
-              <span className="flex-1 truncate">Routing</span>
-            ) : null}
-          </Link>
         </nav>
         <Separator />
         {isSidebarCollapsed ? (
@@ -482,7 +475,7 @@ export function AgentKanbanApp() {
             />
           </div>
 
-          {isSdmsView ? null : (
+          {isReposView ? null : (
             <Select
               items={selectableGroupOptions.map((option) => ({
                 label: groupOptionLabel(option),
@@ -555,32 +548,43 @@ export function AgentKanbanApp() {
         ) : null}
 
         <section className="flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="flex min-h-full gap-3 p-4">
-              {isSdmsView ? (
-                <SdmsBoardColumns
-                  repos={chaosRepos}
-                  reposError={chaosReposError}
-                  agents={visibleAgents}
-                  onSelect={setSelectedAgent}
-                />
-              ) : groups.length > 0 ? (
-                groups.map((group) => (
-                  <BoardColumn
-                    key={group.id}
-                    title={group.title}
-                    icon={selectedGroupOption?.icon ?? CirclesFourIcon}
-                    agents={group.agents}
+          {isRoutingView ? (
+            <ScrollArea className="min-h-0 flex-1">
+              <RoutingPanel
+                repos={repos}
+                reposError={reposError}
+                reposLoading={reposLoading}
+                onRefresh={loadRepos}
+              />
+            </ScrollArea>
+          ) : (
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="flex min-h-full gap-3 p-4">
+                {isSdmsView ? (
+                  <SdmsBoardColumns
+                    repos={repos}
+                    reposError={reposError}
+                    agents={visibleAgents}
                     onSelect={setSelectedAgent}
                   />
-                ))
-              ) : showBoardLoading ? (
-                <BoardLoadingSkeleton />
-              ) : (
-                <EmptyBoard onCreate={() => setIsCreateOpen(true)} />
-              )}
-            </div>
-          </ScrollArea>
+                ) : groups.length > 0 ? (
+                  groups.map((group) => (
+                    <BoardColumn
+                      key={group.id}
+                      title={group.title}
+                      icon={selectedGroupOption?.icon ?? CirclesFourIcon}
+                      agents={group.agents}
+                      onSelect={setSelectedAgent}
+                    />
+                  ))
+                ) : showBoardLoading ? (
+                  <BoardLoadingSkeleton />
+                ) : (
+                  <EmptyBoard onCreate={() => setIsCreateOpen(true)} />
+                )}
+              </div>
+            </ScrollArea>
+          )}
         </section>
       </main>
 
@@ -748,7 +752,7 @@ function SdmsBoardColumns({
   agents,
   onSelect,
 }: {
-  repos: ChaosRepo[]
+  repos: Repo[]
   reposError: string | null
   agents: AgentCard[]
   onSelect: (a: AgentCard) => void
@@ -756,14 +760,16 @@ function SdmsBoardColumns({
   if (reposError && repos.length === 0) {
     return (
       <div className="m-4 flex-1 self-start rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-        <div className="font-medium">Could not load repo list from chaos</div>
+        <div className="font-medium">Could not load repo list</div>
         <div className="mt-0.5 text-xs opacity-80">{reposError}</div>
       </div>
     )
   }
   if (repos.length === 0) {
     return (
-      <div className="m-4 text-sm text-muted-foreground">loading repos…</div>
+      <div className="m-4 text-sm text-muted-foreground">
+        No repositories yet. Add one in <span className="font-medium">Routing</span>.
+      </div>
     )
   }
 
@@ -798,7 +804,7 @@ function SdmsRepoColumn({
   agents,
   onSelect,
 }: {
-  repo: ChaosRepo
+  repo: Repo
   agents: AgentCard[]
   onSelect: (a: AgentCard) => void
 }) {
@@ -816,12 +822,12 @@ function SdmsRepoColumn({
           >
             {repo.name}
           </h2>
-          {repo.jiraProjectKey ? (
+          {repo.jira_project_key ? (
             <span
               className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-              title={`Jira project ${repo.jiraProjectKey}`}
+              title={`Jira project ${repo.jira_project_key}`}
             >
-              {repo.jiraProjectKey}
+              {repo.jira_project_key}
             </span>
           ) : null}
         </div>
@@ -859,7 +865,7 @@ function SdmsOtherColumn({
           />
           <h2 className="truncate text-sm font-medium">Other</h2>
           <span className="text-[11px] text-muted-foreground">
-            not in chaos
+            not configured
           </span>
         </div>
         <Badge variant="outline">{agents.length}</Badge>
@@ -870,6 +876,366 @@ function SdmsOtherColumn({
         ))}
       </div>
     </section>
+  )
+}
+
+/**
+ * Repository management — owns both the SDMs column source AND the
+ * jira-project-key → repo routing the bridge consumes for webhook spawn.
+ * One repo can carry an optional jira_project_key; setting it makes the
+ * row "active routing" (webhooks for that project go to this repo).
+ */
+function RoutingPanel({
+  repos,
+  reposError,
+  reposLoading,
+  onRefresh,
+}: {
+  repos: Repo[]
+  reposError: string | null
+  reposLoading: boolean
+  onRefresh: () => Promise<void>
+}) {
+  const [actionError, setActionError] = React.useState<string | null>(null)
+
+  const onUpsert = async (input: {
+    id?: number
+    url: string
+    jira_project_key: string | null
+    description: string | null
+  }) => {
+    setActionError(null)
+    const path = input.id ? `/api/repos/${input.id}` : "/api/repos"
+    const method = input.id ? "PUT" : "POST"
+    const resp = await fetch(path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: input.url,
+        jira_project_key: input.jira_project_key,
+        description: input.description,
+      }),
+    })
+    const json = (await resp.json().catch(() => null)) as
+      | { error?: string }
+      | null
+    if (!resp.ok) {
+      setActionError(json?.error ?? `HTTP ${resp.status}`)
+      return false
+    }
+    await onRefresh()
+    return true
+  }
+
+  const onDelete = async (id: number) => {
+    setActionError(null)
+    const resp = await fetch(`/api/repos/${id}`, { method: "DELETE" })
+    if (!resp.ok) {
+      const json = (await resp.json().catch(() => null)) as
+        | { error?: string }
+        | null
+      setActionError(json?.error ?? `HTTP ${resp.status}`)
+      return
+    }
+    await onRefresh()
+  }
+
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-8">
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight">Repositories</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The canonical list NEST uses for SDM kanban columns and Jira
+          webhook routing. Set a Jira project key on a repo to make Cursor
+          agents for tickets in that project spawn against this repo.
+          Tickets in unmapped projects fall back to the bridge&apos;s{" "}
+          <code className="font-mono text-foreground">TARGET_REPO_URL</code>.
+        </p>
+      </div>
+
+      {reposError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="font-medium">Bridge unreachable</div>
+          <div className="mt-0.5 text-xs opacity-80">{reposError}</div>
+          <Button
+            variant="outline"
+            size="xs"
+            className="mt-2"
+            onClick={() => void onRefresh()}
+          >
+            retry
+          </Button>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {actionError}
+        </div>
+      ) : null}
+
+      <AddRepoCard onSubmit={onUpsert} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Configured repositories</CardTitle>
+          <CardDescription>
+            {reposLoading && repos.length === 0
+              ? "loading…"
+              : `${repos.length} configured · ${repos.filter((r) => r.jira_project_key).length} with Jira routing`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {repos.length === 0 && !reposLoading ? (
+            <p className="text-sm text-muted-foreground">
+              Nothing yet. Add a repo above to get it into the SDMs board
+              and (optionally) wire up Jira routing.
+            </p>
+          ) : null}
+          {repos.map((r) => (
+            <RepoRow
+              key={r.id}
+              repo={r}
+              onSubmit={(patch) =>
+                onUpsert({
+                  id: r.id,
+                  url: patch.url,
+                  jira_project_key: patch.jira_project_key,
+                  description: patch.description,
+                })
+              }
+              onDelete={() => onDelete(r.id)}
+            />
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function AddRepoCard({
+  onSubmit,
+}: {
+  onSubmit: (input: {
+    url: string
+    jira_project_key: string | null
+    description: string | null
+  }) => Promise<boolean>
+}) {
+  const [url, setUrl] = React.useState("")
+  const [jiraKey, setJiraKey] = React.useState("")
+  const [description, setDescription] = React.useState("")
+  const [submitting, setSubmitting] = React.useState(false)
+
+  const canSubmit = url.trim().length > 0 && !submitting
+
+  const handle = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canSubmit) return
+    setSubmitting(true)
+    const ok = await onSubmit({
+      url: url.trim(),
+      jira_project_key: jiraKey.trim() || null,
+      description: description.trim() || null,
+    })
+    setSubmitting(false)
+    if (ok) {
+      setUrl("")
+      setJiraKey("")
+      setDescription("")
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Add a repository</CardTitle>
+        <CardDescription>
+          Paste a GitHub URL. Add a Jira project key if you want webhook
+          tickets in that project to spawn agents against this repo.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handle} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              GitHub URL
+            </label>
+            <Input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://github.com/reasoningco/ChefOS"
+              className="font-mono text-sm"
+              required
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">
+                Jira project key (optional)
+              </label>
+              <Input
+                value={jiraKey}
+                onChange={(e) => setJiraKey(e.target.value.toUpperCase())}
+                placeholder="DEV"
+                className="font-mono text-sm uppercase"
+                maxLength={16}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">
+                Description (optional)
+              </label>
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Backend services"
+                className="text-sm"
+              />
+            </div>
+          </div>
+        </form>
+      </CardContent>
+      <CardFooter className="justify-end">
+        <Button
+          size="sm"
+          onClick={handle}
+          disabled={!canSubmit}
+        >
+          <PlusIcon data-icon="inline-start" />
+          {submitting ? "Adding…" : "Add repository"}
+        </Button>
+      </CardFooter>
+    </Card>
+  )
+}
+
+function RepoRow({
+  repo,
+  onSubmit,
+  onDelete,
+}: {
+  repo: Repo
+  onSubmit: (input: {
+    url: string
+    jira_project_key: string | null
+    description: string | null
+  }) => Promise<boolean>
+  onDelete: () => void
+}) {
+  const [editing, setEditing] = React.useState(false)
+  const [jiraKey, setJiraKey] = React.useState(repo.jira_project_key ?? "")
+  const [description, setDescription] = React.useState(repo.description ?? "")
+  const [saving, setSaving] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!editing) {
+      setJiraKey(repo.jira_project_key ?? "")
+      setDescription(repo.description ?? "")
+    }
+  }, [repo.jira_project_key, repo.description, editing])
+
+  const save = async () => {
+    setSaving(true)
+    const ok = await onSubmit({
+      url: repo.url,
+      jira_project_key: jiraKey.trim() || null,
+      description: description.trim() || null,
+    })
+    setSaving(false)
+    if (ok) setEditing(false)
+  }
+
+  return (
+    <div className="rounded-lg border bg-background/40 px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <a
+              href={repo.url}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate text-sm font-medium hover:underline"
+            >
+              {repo.owner}/{repo.name}
+            </a>
+            {repo.jira_project_key ? (
+              <span
+                className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                title={`Jira project ${repo.jira_project_key}`}
+              >
+                {repo.jira_project_key}
+              </span>
+            ) : null}
+          </div>
+          {repo.description ? (
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {repo.description}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {!editing ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setEditing(true)}
+            >
+              edit
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Delete"
+            title="Delete"
+            onClick={onDelete}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Jira project key
+            </label>
+            <Input
+              value={jiraKey}
+              onChange={(e) => setJiraKey(e.target.value.toUpperCase())}
+              placeholder="—"
+              className="h-8 font-mono text-xs uppercase"
+              maxLength={16}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Description
+            </label>
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="—"
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="col-span-2 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setEditing(false)}
+            >
+              cancel
+            </Button>
+            <Button size="xs" onClick={save} disabled={saving}>
+              {saving ? "saving…" : "save"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1484,6 +1850,8 @@ function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
     return agents.filter((agent) => isAgentActive(agent.status))
   }
 
+  // Routing has no per-agent filter — its count is repo-driven and is
+  // overridden in the sidebar render path.
   return agents
 }
 
