@@ -17,6 +17,7 @@ import {
   PlayIcon,
   PlusIcon,
   SignOutIcon,
+  UsersThreeIcon,
   XIcon,
 } from "@phosphor-icons/react"
 
@@ -320,11 +321,27 @@ export function AgentKanbanApp() {
             />
           ))}
           <Link
+            href="/sdms"
+            aria-label={isSidebarCollapsed ? "SDMs" : undefined}
+            title={isSidebarCollapsed ? "SDMs" : undefined}
+            className={cn(
+              "relative mt-2 flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
+              isSidebarCollapsed
+                ? "size-11 justify-center p-0"
+                : "px-2 py-1.5 text-left text-sm",
+            )}
+          >
+            <UsersThreeIcon aria-hidden="true" />
+            {!isSidebarCollapsed ? (
+              <span className="flex-1 truncate">SDMs</span>
+            ) : null}
+          </Link>
+          <Link
             href="/routing"
             aria-label={isSidebarCollapsed ? "Routing" : undefined}
             title={isSidebarCollapsed ? "Routing" : undefined}
             className={cn(
-              "relative mt-2 flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
+              "relative flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
               isSidebarCollapsed
                 ? "size-11 justify-center p-0"
                 : "px-2 py-1.5 text-left text-sm",
