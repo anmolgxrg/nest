@@ -71,7 +71,6 @@ type SidebarFilter =
   | "all"
   | "withArtifacts"
   | "prAgents"
-  | "recentlyActive"
   | "sdms"
   | "routing"
 
@@ -110,6 +109,35 @@ const TERMINAL_STATUSES = new Set([
 function isAgentActive(status: string | undefined) {
   if (!status) return false
   return !TERMINAL_STATUSES.has(status.trim().toLowerCase())
+}
+
+/**
+ * Find the Cursor RepositoryOption that corresponds to a bridge Repo.
+ * Cursor's API returns its own list of repositories the user has linked;
+ * the SDMs columns come from our bridge. We bridge the two by URL match
+ * (case-insensitive, ignoring `.git` and trailing slash) so the "+ new
+ * agent" button in a column can preselect that repo in the create dialog.
+ */
+function findRepositoryOption(
+  repo: Repo,
+  options: RepositoryOption[],
+): RepositoryOption | null {
+  const norm = (u: string | undefined) =>
+    (u ?? "")
+      .toLowerCase()
+      .trim()
+      .replace(/\.git$/, "")
+      .replace(/\/+$/, "")
+  const target = norm(repo.url)
+  return (
+    options.find((o) => norm(o.url) === target) ??
+    options.find(
+      (o) =>
+        o.owner?.toLowerCase() === repo.owner.toLowerCase() &&
+        o.name?.toLowerCase() === repo.name.toLowerCase(),
+    ) ??
+    null
+  )
 }
 
 function repoMatchesAgent(repo: Repo, agent: AgentCard): boolean {
@@ -162,7 +190,6 @@ const sidebarFilters: {
   { id: "all", label: "All agents", icon: CirclesFourIcon },
   { id: "withArtifacts", label: "With artifacts", icon: ImageSquareIcon },
   { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
-  { id: "recentlyActive", label: "Recently active", icon: ClockIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
   { id: "routing", label: "Routing", icon: GitBranchIcon },
 ]
@@ -196,6 +223,11 @@ export function AgentKanbanApp() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
+  // When the user clicks "+" on a SDMs repo column, we preselect that
+  // repo in the create dialog so they don't have to pick again.
+  const [createForRepoId, setCreateForRepoId] = React.useState<string | null>(
+    null,
+  )
   const [selectedAgent, setSelectedAgent] = React.useState<AgentCard | null>(
     null,
   )
@@ -565,7 +597,13 @@ export function AgentKanbanApp() {
                     repos={repos}
                     reposError={reposError}
                     agents={visibleAgents}
+                    repositoryOptions={repositories}
                     onSelect={setSelectedAgent}
+                    onCreateForRepo={(repo) => {
+                      const option = findRepositoryOption(repo, repositories)
+                      setCreateForRepoId(option?.id ?? null)
+                      setIsCreateOpen(true)
+                    }}
                   />
                 ) : groups.length > 0 ? (
                   groups.map((group) => (
@@ -593,7 +631,11 @@ export function AgentKanbanApp() {
           sessionId={session.id}
           models={models}
           repositories={repositories}
-          onClose={() => setIsCreateOpen(false)}
+          initialRepositoryId={createForRepoId ?? undefined}
+          onClose={() => {
+            setIsCreateOpen(false)
+            setCreateForRepoId(null)
+          }}
           onCreated={handleAgentCreated}
         />
       ) : null}
@@ -750,12 +792,16 @@ function SdmsBoardColumns({
   repos,
   reposError,
   agents,
+  repositoryOptions,
   onSelect,
+  onCreateForRepo,
 }: {
   repos: Repo[]
   reposError: string | null
   agents: AgentCard[]
+  repositoryOptions: RepositoryOption[]
   onSelect: (a: AgentCard) => void
+  onCreateForRepo: (repo: Repo) => void
 }) {
   if (reposError && repos.length === 0) {
     return (
@@ -784,14 +830,20 @@ function SdmsBoardColumns({
 
   return (
     <>
-      {repos.map((repo) => (
-        <SdmsRepoColumn
-          key={`${repo.owner}/${repo.name}`}
-          repo={repo}
-          agents={buckets.get(`${repo.owner}/${repo.name}`) ?? []}
-          onSelect={onSelect}
-        />
-      ))}
+      {repos.map((repo) => {
+        const linkable =
+          repositoryOptions.length === 0 ||
+          findRepositoryOption(repo, repositoryOptions) !== null
+        return (
+          <SdmsRepoColumn
+            key={`${repo.owner}/${repo.name}`}
+            repo={repo}
+            agents={buckets.get(`${repo.owner}/${repo.name}`) ?? []}
+            onSelect={onSelect}
+            onCreate={linkable ? () => onCreateForRepo(repo) : undefined}
+          />
+        )
+      })}
       {other.length > 0 ? (
         <SdmsOtherColumn agents={other} onSelect={onSelect} />
       ) : null}
@@ -803,10 +855,12 @@ function SdmsRepoColumn({
   repo,
   agents,
   onSelect,
+  onCreate,
 }: {
   repo: Repo
   agents: AgentCard[]
   onSelect: (a: AgentCard) => void
+  onCreate?: () => void
 }) {
   return (
     <section className="flex w-80 shrink-0 flex-col rounded-xl bg-muted/20">
@@ -831,7 +885,20 @@ function SdmsRepoColumn({
             </span>
           ) : null}
         </div>
-        <Badge variant="secondary">{agents.length}</Badge>
+        <div className="flex shrink-0 items-center gap-1">
+          <Badge variant="secondary">{agents.length}</Badge>
+          {onCreate ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onCreate}
+              aria-label={`New agent for ${repo.owner}/${repo.name}`}
+              title={`New agent for ${repo.owner}/${repo.name}`}
+            >
+              <PlusIcon />
+            </Button>
+          ) : null}
+        </div>
       </header>
       <div className="flex flex-col gap-2 p-2">
         {agents.length === 0 ? (
@@ -1489,18 +1556,22 @@ function CreateAgentDialog({
   sessionId,
   repositories,
   models,
+  initialRepositoryId,
   onClose,
   onCreated,
 }: {
   sessionId: string
   repositories: RepositoryOption[]
   models: ModelOption[]
+  initialRepositoryId?: string
   onClose: () => void
   onCreated: (agent: AgentCard) => Promise<void>
 }) {
   const [name, setName] = React.useState("")
   const [prompt, setPrompt] = React.useState("")
-  const [repositoryId, setRepositoryId] = React.useState(repositories[0]?.id ?? "")
+  const [repositoryId, setRepositoryId] = React.useState(
+    initialRepositoryId ?? repositories[0]?.id ?? "",
+  )
   const [modelId, setModelId] = React.useState(models[0]?.id ?? "")
   const [branch, setBranch] = React.useState("")
   const [autoCreatePR, setAutoCreatePR] = React.useState(true)
@@ -1842,10 +1913,6 @@ function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
     return agents.filter((agent) => Boolean(agent.prUrl))
   }
 
-  if (filter === "recentlyActive") {
-    return agents.filter((agent) => isRecentlyActive(agent.updatedAt ?? agent.createdAt))
-  }
-
   if (filter === "sdms") {
     return agents.filter((agent) => isAgentActive(agent.status))
   }
@@ -1853,20 +1920,6 @@ function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
   // Routing has no per-agent filter — its count is repo-driven and is
   // overridden in the sidebar render path.
   return agents
-}
-
-function isRecentlyActive(value: string | undefined) {
-  if (!value) {
-    return false
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return false
-  }
-
-  const diffMs = Date.now() - date.getTime()
-  return diffMs >= 0 && diffMs <= 86_400_000
 }
 
 function getPreviewArtifact(artifacts: AgentCard["artifacts"]) {
