@@ -5,9 +5,11 @@ import {
   ArrowClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  ChartLineIcon,
   CirclesFourIcon,
   ClockIcon,
   FileIcon,
+  FolderIcon,
   GitBranchIcon,
   ImageSquareIcon,
   KanbanIcon,
@@ -16,6 +18,7 @@ import {
   PlayIcon,
   PlusIcon,
   SignOutIcon,
+  TerminalWindowIcon,
   UsersThreeIcon,
   XIcon,
 } from "@phosphor-icons/react"
@@ -42,6 +45,8 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { AgentDetailsDialog } from "@/components/agent-details-dialog"
+import { ProjectsView } from "@/components/chaos/projects-view"
+import { UserSdasView } from "@/components/chaos/user-sdas-view"
 import { Textarea } from "@/components/ui/textarea"
 import type {
   AgentCard,
@@ -73,6 +78,8 @@ type SidebarFilter =
   | "prAgents"
   | "sdms"
   | "routing"
+  | "projects"
+  | "userSdas"
 
 interface Repo {
   id: number
@@ -191,8 +198,15 @@ const sidebarFilters: {
   { id: "withArtifacts", label: "With artifacts", icon: ImageSquareIcon },
   { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
+  { id: "userSdas", label: "User SDAs", icon: TerminalWindowIcon },
   { id: "routing", label: "Routing", icon: GitBranchIcon },
+  { id: "projects", label: "By project", icon: FolderIcon },
 ]
+
+// Sidebar items that swap the main content for a chaos view rather than
+// filtering the in-memory agents list. These hide the search/group-by chrome
+// and don't compute counts.
+const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set(["projects", "userSdas"])
 
 const boardLoadingColumns: {
   id: string
@@ -371,8 +385,9 @@ export function AgentKanbanApp() {
   const showBoardLoading = isLoading && agents.length === 0 && visibleAgents.length === 0
   const sidebarItems = sidebarFilters.map((item) => ({
     ...item,
-    count:
-      item.id === "routing"
+    count: CHAOS_FILTERS.has(item.id)
+      ? undefined
+      : item.id === "routing"
         ? repos.length
         : filterAgentsBySidebar(searchedAgents, item.id).length,
   }))
@@ -381,6 +396,7 @@ export function AgentKanbanApp() {
   const isSdmsView = sidebarFilter === "sdms"
   const isRoutingView = sidebarFilter === "routing"
   const isReposView = isSdmsView || isRoutingView
+  const isChaosView = CHAOS_FILTERS.has(sidebarFilter)
   const groups = isReposView
     ? []
     : groupAgents(visibleAgents, selectedGroupBy)
@@ -494,6 +510,8 @@ export function AgentKanbanApp() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+          {isChaosView ? <div className="flex-1" /> : (
+          <>
           <div className="relative flex min-w-48 flex-1 items-center">
             <MagnifyingGlassIcon
               aria-hidden="true"
@@ -571,16 +589,22 @@ export function AgentKanbanApp() {
             <PlusIcon data-icon="inline-start" />
             New agent
           </Button>
+          </>
+          )}
         </header>
 
-        {error ? (
+        {error && !isChaosView ? (
           <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
             {error}
           </div>
         ) : null}
 
         <section className="flex min-h-0 flex-1 flex-col">
-          {isRoutingView ? (
+          {isChaosView ? (
+            <ScrollArea className="min-h-0 flex-1">
+              {sidebarFilter === "projects" ? <ProjectsView /> : <UserSdasView />}
+            </ScrollArea>
+          ) : isRoutingView ? (
             <ScrollArea className="min-h-0 flex-1">
               <RoutingPanel
                 repos={repos}
@@ -1772,18 +1796,19 @@ function SidebarItem({
 }: {
   active: boolean
   collapsed?: boolean
-  count: number
+  count?: number
   icon: IconComponent
   label: string
   onSelect: () => void
 }) {
+  const showCount = typeof count === "number"
   return (
     <button
       type="button"
       aria-pressed={active}
-      aria-label={collapsed ? `${label}: ${count}` : undefined}
+      aria-label={collapsed && showCount ? `${label}: ${count}` : collapsed ? label : undefined}
       onClick={onSelect}
-      title={collapsed ? `${label}: ${count}` : undefined}
+      title={collapsed && showCount ? `${label}: ${count}` : collapsed ? label : undefined}
       className={cn(
         "relative flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
         collapsed ? "size-11 justify-center p-0" : "px-2 py-1.5 text-left",
@@ -1792,16 +1817,20 @@ function SidebarItem({
     >
       <Icon aria-hidden="true" />
       {collapsed ? (
-        <Badge
-          variant={active ? "secondary" : "outline"}
-          className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-[0.65rem]"
-        >
-          {count}
-        </Badge>
+        showCount ? (
+          <Badge
+            variant={active ? "secondary" : "outline"}
+            className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-[0.65rem]"
+          >
+            {count}
+          </Badge>
+        ) : null
       ) : (
         <>
           <span className="min-w-0 flex-1 truncate">{label}</span>
-          <Badge variant={active ? "secondary" : "outline"}>{count}</Badge>
+          {showCount ? (
+            <Badge variant={active ? "secondary" : "outline"}>{count}</Badge>
+          ) : null}
         </>
       )}
     </button>
