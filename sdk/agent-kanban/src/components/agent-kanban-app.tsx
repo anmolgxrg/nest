@@ -17,6 +17,7 @@ import {
   MagnifyingGlassIcon,
   PlayIcon,
   PlusIcon,
+  PulseIcon,
   SignOutIcon,
   TerminalWindowIcon,
   UsersThreeIcon,
@@ -45,6 +46,7 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { AgentDetailsDialog } from "@/components/agent-details-dialog"
+import { OrgActivityView } from "@/components/chaos/org-activity-view"
 import { ProjectsView } from "@/components/chaos/projects-view"
 import { UserSdasView } from "@/components/chaos/user-sdas-view"
 import { Textarea } from "@/components/ui/textarea"
@@ -80,6 +82,7 @@ type SidebarFilter =
   | "routing"
   | "projects"
   | "userSdas"
+  | "orgActivity"
 
 interface Repo {
   id: number
@@ -200,13 +203,18 @@ const sidebarFilters: {
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
   { id: "userSdas", label: "User SDAs", icon: TerminalWindowIcon },
   { id: "routing", label: "Routing", icon: GitBranchIcon },
+  { id: "orgActivity", label: "Org activity", icon: PulseIcon },
   { id: "projects", label: "By project", icon: FolderIcon },
 ]
 
 // Sidebar items that swap the main content for a chaos view rather than
 // filtering the in-memory agents list. These hide the search/group-by chrome
 // and don't compute counts.
-const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set(["projects", "userSdas"])
+const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set([
+  "projects",
+  "userSdas",
+  "orgActivity",
+])
 
 const boardLoadingColumns: {
   id: string
@@ -602,7 +610,13 @@ export function AgentKanbanApp() {
         <section className="flex min-h-0 flex-1 flex-col">
           {isChaosView ? (
             <ScrollArea className="min-h-0 flex-1">
-              {sidebarFilter === "projects" ? <ProjectsView /> : <UserSdasView />}
+              {sidebarFilter === "projects" ? (
+                <ProjectsView />
+              ) : sidebarFilter === "orgActivity" ? (
+                <OrgActivityView />
+              ) : (
+                <UserSdasView />
+              )}
             </ScrollArea>
           ) : isRoutingView ? (
             <ScrollArea className="min-h-0 flex-1">
