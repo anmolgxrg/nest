@@ -45,6 +45,28 @@ The token stays on the Next.js server. The browser talks only to
 and also includes the Routing page repositories when `BRIDGE_URL` and
 `BRIDGE_ADMIN_TOKEN` are configured.
 
+### CLI
+
+Install the local shims once:
+
+```bash
+./scripts/cloud-agent install
+```
+
+Then attach or send prompts from any shell:
+
+```bash
+cloud-agent
+cloud agent status
+cloud agent prompt "Open ChefOS, run the relevant tests, and summarize failures."
+cloud agent tail 80
+cloud agent tunnel
+```
+
+The CLI uses SSH to `jensen` and the existing tmux/helper scripts on Jetson. It
+does not store or print the web-console token unless you explicitly run
+`cloud agent token`.
+
 ## Notes
 
 Repository listing is rate-limited by the Cloud Agents API and is cached briefly

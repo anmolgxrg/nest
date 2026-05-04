@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST="${CLOUD_AGENT_HOST:-jensen}"
+SESSION="${CLOUD_AGENT_SESSION:-ai}"
+CLAUDE_WINDOW="${CLOUD_AGENT_CLAUDE_WINDOW:-Claude}"
+CODEX_WINDOW="${CLOUD_AGENT_CODEX_WINDOW:-Codex}"
+WORKDIR="${CLOUD_AGENT_WORKDIR:-}"
+REPO="${CLOUD_AGENT_REPO:-}"
+LOCAL_PORT="${CLOUD_AGENT_LOCAL_PORT:-8787}"
+REMOTE_PORT="${CLOUD_AGENT_REMOTE_PORT:-8787}"
+
+SSH_OPTS=(
+  -o ServerAliveInterval=30
+  -o ServerAliveCountMax=3
+  -o ExitOnForwardFailure=yes
+)
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  cloud-agent [claude]          Attach to the Jetson ai tmux session and select Claude
+  cloud-agent attach            Attach to the Jetson ai tmux session
+  cloud-agent codex             Attach to the Jetson ai tmux session and select/start Codex
+  cloud-agent prompt "task"     Send a prompt to Claude without attaching
+  printf "task" | cloud-agent prompt
+  cloud-agent tail [lines]      Print Claude tmux output
+  cloud-agent status            Show Jetson agent-console and tmux status
+  cloud-agent tunnel            Forward localhost:8787 to Jetson's agent console
+  cloud-agent token             Print the Jetson web-console token
+  cloud-agent install           Install local cloud-agent and cloud agent shims
+
+Environment:
+  CLOUD_AGENT_HOST              SSH host, default: jensen
+  CLOUD_AGENT_SESSION           tmux session, default: ai
+  CLOUD_AGENT_WORKDIR           tmux session workdir, default: $HOME/src on Jetson
+  CLOUD_AGENT_REPO              repo used when starting Codex, default: $HOME/src/ChefOS
+  CLOUD_AGENT_LOCAL_PORT        local tunnel port, default: 8787
+  CLOUD_AGENT_REMOTE_PORT       Jetson console port, default: 8787
+USAGE
+}
+
+shq() {
+  local value
+  value="${1-}"
+  printf "'"
+  printf "%s" "$value" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+remote_assignments() {
+  printf 'CLOUD_AGENT_SESSION=%s ' "$(shq "$SESSION")"
+  printf 'CLOUD_AGENT_CLAUDE_WINDOW=%s ' "$(shq "$CLAUDE_WINDOW")"
+  printf 'CLOUD_AGENT_CODEX_WINDOW=%s ' "$(shq "$CODEX_WINDOW")"
+  if [ -n "$WORKDIR" ]; then
+    printf 'CLOUD_AGENT_WORKDIR=%s ' "$(shq "$WORKDIR")"
+  fi
+  if [ -n "$REPO" ]; then
+    printf 'CLOUD_AGENT_REPO=%s ' "$(shq "$REPO")"
+  fi
+}
+
+ssh_plain() {
+  ssh "${SSH_OPTS[@]}" "$HOST" "$@"
+}
+
+ssh_tty() {
+  ssh -t "${SSH_OPTS[@]}" "$HOST" "$@"
+}
+
+run_remote() {
+  local script
+  script="$1"
+  ssh_plain "$(remote_assignments) bash -lc $(shq "$script")"
+}
+
+run_remote_tty() {
+  local script
+  script="$1"
+  ssh_tty "$(remote_assignments) bash -lc $(shq "$script")"
+}
+
+remote_common='
+set -euo pipefail
+export PATH="$HOME/.local/bin:$HOME/.local/share/micromamba/envs/ai-agents/bin:$HOME/bin:$PATH"
+session="${CLOUD_AGENT_SESSION:-ai}"
+workdir="${CLOUD_AGENT_WORKDIR:-$HOME/src}"
+repo="${CLOUD_AGENT_REPO:-$HOME/src/ChefOS}"
+tmux_bin="$HOME/.local/share/micromamba/envs/ai-agents/bin/tmux"
+if [ -x "$HOME/.local/bin/tmux" ]; then
+  tmux_bin="$HOME/.local/bin/tmux"
+fi
+'
+
+attach_script='
+'"$remote_common"'
+mkdir -p "$workdir"
+"$tmux_bin" has-session -t "$session" 2>/dev/null || "$tmux_bin" new-session -d -s "$session" -c "$workdir"
+if [ -x "$HOME/.local/bin/ai" ]; then
+  exec "$HOME/.local/bin/ai" "$session"
+fi
+exec "$tmux_bin" new-session -A -s "$session" -c "$workdir"
+'
+
+claude_script='
+'"$remote_common"'
+window="${CLOUD_AGENT_CLAUDE_WINDOW:-Claude}"
+mkdir -p "$workdir"
+if [ -x "$HOME/.local/bin/claude-agent" ]; then
+  "$HOME/.local/bin/claude-agent" >/dev/null
+else
+  "$tmux_bin" has-session -t "$session" 2>/dev/null || "$tmux_bin" new-session -d -s "$session" -c "$workdir"
+fi
+"$tmux_bin" select-window -t "$session:$window" 2>/dev/null || true
+if [ -x "$HOME/.local/bin/ai" ]; then
+  exec "$HOME/.local/bin/ai" "$session"
+fi
+exec "$tmux_bin" new-session -A -s "$session" -c "$workdir"
+'
+
+codex_script='
+'"$remote_common"'
+window="${CLOUD_AGENT_CODEX_WINDOW:-Codex}"
+mkdir -p "$workdir"
+"$tmux_bin" has-session -t "$session" 2>/dev/null || "$tmux_bin" new-session -d -s "$session" -c "$workdir"
+if ! "$tmux_bin" list-windows -t "$session" -F "#{window_name}" | grep -Fx "$window" >/dev/null; then
+  "$tmux_bin" new-window -t "$session" -n "$window" -c "$repo"
+fi
+pane="$("$tmux_bin" list-panes -t "$session:$window" -F "#{pane_id}" | head -n 1)"
+cmd="$("$tmux_bin" display-message -p -t "$pane" "#{pane_current_command}" 2>/dev/null || true)"
+case "$cmd" in
+  bash|zsh|sh|fish)
+    quoted_repo="$(printf "%q" "$repo")"
+    "$tmux_bin" send-keys -t "$pane" "cd $quoted_repo && codex" C-m
+    ;;
+esac
+"$tmux_bin" select-window -t "$session:$window" 2>/dev/null || true
+if [ -x "$HOME/.local/bin/ai" ]; then
+  exec "$HOME/.local/bin/ai" "$session"
+fi
+exec "$tmux_bin" new-session -A -s "$session" -c "$workdir"
+'
+
+status_script='
+'"$remote_common"'
+if [ -x "$HOME/.local/bin/agent-console-status" ]; then
+  "$HOME/.local/bin/agent-console-status"
+else
+  printf "agent-console-status not found\n" >&2
+fi
+printf "\nTmux windows:\n"
+if "$tmux_bin" has-session -t "$session" 2>/dev/null; then
+  "$tmux_bin" list-windows -t "$session" -F "  #{window_index}:#{window_name} #{pane_current_command} #{pane_current_path}"
+else
+  printf "  session not found: %s\n" "$session"
+fi
+'
+
+prompt() {
+  local prompt_text
+  if [ "$#" -gt 0 ]; then
+    prompt_text="$*"
+  else
+    prompt_text="$(cat)"
+  fi
+
+  if [ -z "${prompt_text//[[:space:]]/}" ]; then
+    printf 'cloud-agent prompt requires text or stdin\n' >&2
+    return 2
+  fi
+
+  printf '%s' "$prompt_text" | ssh_plain "$(remote_assignments) bash -lc $(shq '
+set -euo pipefail
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+exec "$HOME/.local/bin/claude-prompt"
+')"
+}
+
+tail_output() {
+  local lines
+  lines="${1:-120}"
+  if ! [[ "$lines" =~ ^[0-9]+$ ]]; then
+    printf 'lines must be a positive integer\n' >&2
+    return 2
+  fi
+  CLOUD_AGENT_LINES="$lines" ssh_plain "$(remote_assignments) CLOUD_AGENT_LINES=$(shq "$lines") bash -lc $(shq '
+set -euo pipefail
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+exec "$HOME/.local/bin/claude-tail" "${CLOUD_AGENT_LINES:-120}"
+')"
+}
+
+tunnel() {
+  printf 'Forwarding http://127.0.0.1:%s to %s:127.0.0.1:%s\n' "$LOCAL_PORT" "$HOST" "$REMOTE_PORT" >&2
+  exec ssh -N "${SSH_OPTS[@]}" -L "${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}" "$HOST"
+}
+
+install_shims() {
+  local script_dir script_path bin_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
+  bin_dir="$HOME/.local/bin"
+  mkdir -p "$bin_dir"
+  ln -sf "$script_path" "$bin_dir/cloud-agent"
+  cat > "$bin_dir/cloud" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1-}" = "agent" ]; then
+  shift
+  exec cloud-agent "$@"
+fi
+cat >&2 <<'USAGE'
+Usage:
+  cloud agent [args...]
+
+This shim dispatches to cloud-agent. Run: cloud-agent --help
+USAGE
+exit 2
+SHIM
+  chmod 755 "$bin_dir/cloud"
+  chmod 755 "$script_path"
+  printf 'Installed:\n  %s/cloud-agent -> %s\n  %s/cloud\n' "$bin_dir" "$script_path" "$bin_dir"
+}
+
+main() {
+  local command
+  command="${1:-claude}"
+  if [ "$#" -gt 0 ]; then
+    shift
+  fi
+
+  case "$command" in
+    claude)
+      run_remote_tty "$claude_script"
+      ;;
+    attach|tmux)
+      run_remote_tty "$attach_script"
+      ;;
+    codex)
+      run_remote_tty "$codex_script"
+      ;;
+    prompt|send)
+      prompt "$@"
+      ;;
+    tail|logs)
+      tail_output "$@"
+      ;;
+    status|doctor)
+      run_remote "$status_script"
+      ;;
+    tunnel|forward)
+      tunnel
+      ;;
+    token)
+      run_remote 'set -euo pipefail; exec "$HOME/.local/bin/agent-console-token"'
+      ;;
+    install)
+      install_shims
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      printf 'unknown command: %s\n\n' "$command" >&2
+      usage >&2
+      return 2
+      ;;
+  esac
+}
+
+main "$@"
