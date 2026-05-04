@@ -27,6 +27,24 @@ If you keep "Remember this key" checked, the key is stored locally at
 `~/.agent-kanban/settings.json`; otherwise it is kept only in the in-memory app
 session.
 
+## Jetson Agent
+
+The sidebar includes a Jetson agent page that proxies to the persistent Claude
+tmux console on `jensen`. Start the local tunnel and run Next with the Jetson
+console token:
+
+```bash
+ssh -N -L 8787:127.0.0.1:8787 jensen
+export JETSON_AGENT_TOKEN="$(ssh jensen '~/.local/bin/agent-console-token')"
+export JETSON_AGENT_BASE_URL="http://127.0.0.1:8787"
+pnpm dev
+```
+
+The token stays on the Next.js server. The browser talks only to
+`/api/jetson-agent/*`. The clone picker uses linked Cursor/GitHub repositories
+and also includes the Routing page repositories when `BRIDGE_URL` and
+`BRIDGE_ADMIN_TOKEN` are configured.
+
 ## Notes
 
 Repository listing is rate-limited by the Cloud Agents API and is cached briefly

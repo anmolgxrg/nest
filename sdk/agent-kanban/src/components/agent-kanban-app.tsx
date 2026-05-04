@@ -5,7 +5,6 @@ import {
   ArrowClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
-  ChartLineIcon,
   CirclesFourIcon,
   ClockIcon,
   FileIcon,
@@ -49,6 +48,7 @@ import { AgentDetailsDialog } from "@/components/agent-details-dialog"
 import { OrgActivityView } from "@/components/chaos/org-activity-view"
 import { ProjectsView } from "@/components/chaos/projects-view"
 import { UserSdasView } from "@/components/chaos/user-sdas-view"
+import { JetsonAgentView } from "@/components/jetson-agent-view"
 import { Textarea } from "@/components/ui/textarea"
 import type {
   AgentCard,
@@ -58,6 +58,7 @@ import type {
   PublicSession,
   RepositoryOption,
 } from "@/lib/agents/types"
+import type { ConfiguredRepo } from "@/lib/jetson-agent/types"
 import { cn } from "@/lib/utils"
 
 type GroupBy = "status" | "repository" | "createdAt"
@@ -79,21 +80,13 @@ type SidebarFilter =
   | "withArtifacts"
   | "prAgents"
   | "sdms"
+  | "jetsonAgent"
   | "routing"
   | "projects"
   | "userSdas"
   | "orgActivity"
 
-interface Repo {
-  id: number
-  owner: string
-  name: string
-  url: string
-  jira_project_key: string | null
-  description: string | null
-  created_at: string
-  updated_at: string
-}
+type Repo = ConfiguredRepo
 
 /**
  * Statuses we treat as "this agent is no longer running" — used to bucket
@@ -201,6 +194,7 @@ const sidebarFilters: {
   { id: "withArtifacts", label: "With artifacts", icon: ImageSquareIcon },
   { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
+  { id: "jetsonAgent", label: "Jetson agent", icon: TerminalWindowIcon },
   { id: "userSdas", label: "User SDAs", icon: TerminalWindowIcon },
   { id: "routing", label: "Routing", icon: GitBranchIcon },
   { id: "orgActivity", label: "Org activity", icon: PulseIcon },
@@ -214,6 +208,7 @@ const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set([
   "projects",
   "userSdas",
   "orgActivity",
+  "jetsonAgent",
 ])
 
 const boardLoadingColumns: {
@@ -335,10 +330,13 @@ export function AgentKanbanApp() {
   // bridge — so a single fetch hydrates both.
   React.useEffect(() => {
     const repoView =
-      sidebarFilter === "sdms" || sidebarFilter === "routing"
+      sidebarFilter === "sdms" ||
+      sidebarFilter === "routing" ||
+      sidebarFilter === "jetsonAgent"
     if (!repoView) return
     if (repos.length > 0 || reposLoading) return
-    void loadRepos()
+    const id = window.setTimeout(() => void loadRepos(), 0)
+    return () => window.clearTimeout(id)
   }, [sidebarFilter, repos.length, reposLoading, loadRepos])
 
   async function handleSessionCreated(nextSession: PublicSession) {
@@ -614,8 +612,16 @@ export function AgentKanbanApp() {
                 <ProjectsView />
               ) : sidebarFilter === "orgActivity" ? (
                 <OrgActivityView />
-              ) : (
+              ) : sidebarFilter === "userSdas" ? (
                 <UserSdasView />
+              ) : (
+                <JetsonAgentView
+                  configuredRepos={repos}
+                  cloudRepositories={repositories}
+                  reposError={reposError}
+                  reposLoading={reposLoading}
+                  onRefreshRepos={loadRepos}
+                />
               )}
             </ScrollArea>
           ) : isRoutingView ? (
@@ -1235,8 +1241,11 @@ function RepoRow({
 
   React.useEffect(() => {
     if (!editing) {
-      setJiraKey(repo.jira_project_key ?? "")
-      setDescription(repo.description ?? "")
+      const id = window.setTimeout(() => {
+        setJiraKey(repo.jira_project_key ?? "")
+        setDescription(repo.description ?? "")
+      }, 0)
+      return () => window.clearTimeout(id)
     }
   }, [repo.jira_project_key, repo.description, editing])
 
