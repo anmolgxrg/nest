@@ -455,9 +455,6 @@ export function AgentKanbanApp() {
             </Button>
           ) : (
             <>
-              <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <KanbanIcon aria-hidden="true" className="size-4" />
-              </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">NEST</div>
               </div>
