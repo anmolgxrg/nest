@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import {
-  ArrowClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
   CirclesFourIcon,
@@ -167,6 +166,7 @@ type ApiError = {
 
 const sessionStorageKey = "agent-kanban-session-id"
 const defaultGroupBy: GroupBy = "status"
+const autoRefreshMs = 30_000
 
 const groupOptions: GroupOption[] = [
   { id: "status", label: "Status", icon: CirclesFourIcon },
@@ -249,9 +249,16 @@ export function AgentKanbanApp() {
   const [reposError, setReposError] = React.useState<string | null>(null)
   const [reposLoading, setReposLoading] = React.useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
+  const autoRefreshInFlightRef = React.useRef(false)
 
-  const loadBoard = React.useCallback(async (sessionId: string) => {
-    setIsLoading(true)
+  const loadBoard = React.useCallback(async (
+    sessionId: string,
+    options: { showLoading?: boolean } = {},
+  ) => {
+    const showLoading = options.showLoading ?? true
+    if (showLoading) {
+      setIsLoading(true)
+    }
     setError(null)
     try {
       const [agentResult, repositoryResult, modelResult] = await Promise.all([
@@ -268,7 +275,9 @@ export function AgentKanbanApp() {
     } catch (loadError) {
       setError(errorMessage(loadError, "Failed to load cloud agents."))
     } finally {
-      setIsLoading(false)
+      if (showLoading) {
+        setIsLoading(false)
+      }
     }
   }, [])
 
@@ -303,6 +312,27 @@ export function AgentKanbanApp() {
       cancelled = true
     }
   }, [loadBoard])
+
+  React.useEffect(() => {
+    if (status !== "ready" || !session) {
+      return
+    }
+
+    const refresh = async () => {
+      if (autoRefreshInFlightRef.current) {
+        return
+      }
+      autoRefreshInFlightRef.current = true
+      try {
+        await loadBoard(session.id, { showLoading: false })
+      } finally {
+        autoRefreshInFlightRef.current = false
+      }
+    }
+
+    const id = window.setInterval(() => void refresh(), autoRefreshMs)
+    return () => window.clearInterval(id)
+  }, [loadBoard, session, status])
 
   const loadRepos = React.useCallback(async () => {
     setReposLoading(true)
@@ -341,13 +371,6 @@ export function AgentKanbanApp() {
     setSession(nextSession)
     setStatus("ready")
     await loadBoard(nextSession.id)
-  }
-
-  async function handleRefresh() {
-    if (!session) {
-      return
-    }
-    await loadBoard(session.id)
   }
 
   async function handleForgetKey() {
@@ -558,30 +581,6 @@ export function AgentKanbanApp() {
             </Select>
           )}
 
-          <div className="hidden shrink-0 items-center gap-2 text-xs text-muted-foreground xl:flex">
-            <span>{visibleAgents.length} shown</span>
-            {isLoading ? (
-              <Badge variant="secondary">Syncing</Badge>
-            ) : (
-              <Badge variant="outline">Live SDK data</Badge>
-            )}
-          </div>
-          <div className="shrink-0 xl:hidden">
-            {isLoading ? (
-              <Badge variant="secondary">Syncing</Badge>
-            ) : (
-              <Badge variant="outline">Live SDK data</Badge>
-            )}
-          </div>
-
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isLoading}>
-            <ArrowClockwiseIcon data-icon="inline-start" />
-            Refresh
-          </Button>
-          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-            <PlusIcon data-icon="inline-start" />
-            New agent
-          </Button>
           </>
           )}
         </header>
