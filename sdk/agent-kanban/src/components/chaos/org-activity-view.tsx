@@ -63,7 +63,9 @@ export function OrgActivityView() {
 
   React.useEffect(() => {
     let live = true;
-    setLoading(true);
+    const loadingTimer = window.setTimeout(() => {
+      if (live) setLoading(true);
+    }, 0);
     fetch(`/api/chaos/activity?range=${range}`, { cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -82,6 +84,7 @@ export function OrgActivityView() {
       });
     return () => {
       live = false;
+      window.clearTimeout(loadingTimer);
     };
   }, [range]);
 
@@ -325,7 +328,11 @@ function ByPerson({
       return null;
     }
     const all = rollupsByPerson.get(selected) ?? [];
-    const cutoff = Date.now() - page * PAGE_DAYS * 86_400_000;
+    const latestSeen = all.reduce(
+      (latest, r) => Math.max(latest, new Date(r.lastSeen).getTime()),
+      0,
+    );
+    const cutoff = latestSeen - page * PAGE_DAYS * 86_400_000;
     const visible = all.filter(
       (r) => new Date(r.lastSeen).getTime() >= cutoff,
     );
@@ -530,8 +537,11 @@ function PersonLocChart({
 
   React.useEffect(() => {
     let live = true;
-    setData(null);
-    setErr(null);
+    const resetTimer = window.setTimeout(() => {
+      if (!live) return;
+      setData(null);
+      setErr(null);
+    }, 0);
     fetch(`/api/chaos/person-loc?personId=${encodeURIComponent(personId)}`, {
       cache: "no-store",
     })
@@ -547,6 +557,7 @@ function PersonLocChart({
       });
     return () => {
       live = false;
+      window.clearTimeout(resetTimer);
     };
   }, [personId]);
 
@@ -955,4 +966,3 @@ function initials(name: string): string {
     .join("")
     .toUpperCase();
 }
-

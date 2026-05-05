@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireRole } from "@/lib/agents/server";
 
 const CHAOS_BASE = (
   process.env.CHAOS_BASE_URL ?? "https://chaos.reasoning.company"
@@ -8,6 +9,15 @@ export async function proxyChaos(
   req: NextRequest,
   upstreamPath: string,
 ): Promise<NextResponse> {
+  try {
+    await requireRole(req, "viewer");
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Unauthorized" },
+      { status: 403 },
+    );
+  }
+
   const incoming = new URL(req.url);
   const upstream = new URL(CHAOS_BASE + upstreamPath);
   incoming.searchParams.forEach((v, k) => upstream.searchParams.set(k, v));

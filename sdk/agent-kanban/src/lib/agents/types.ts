@@ -3,10 +3,21 @@ export type PublicUser = {
   email?: string
 }
 
+export type AppRole = "admin" | "operator" | "viewer"
+
+export type AppPermissions = {
+  createAgents: boolean
+  manageRouting: boolean
+  useJetsonAgent: boolean
+  viewAgents: boolean
+}
+
 export type PublicSession = {
   id: string
   user: PublicUser | null
   hasPersistedKey: boolean
+  role: AppRole
+  permissions: AppPermissions
 }
 
 export type ModelOption = {
@@ -62,6 +73,9 @@ export type CreateAgentInput = {
   modelId?: string
   branch?: string
   autoCreatePR?: boolean
+  sdmTaskId?: string
+  sdaRoleId?: string
+  sdaRoleTitle?: string
 }
 
 export type CreateAgentResponse = {

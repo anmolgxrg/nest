@@ -78,9 +78,12 @@ export function UserSdasView() {
   }, []);
 
   React.useEffect(() => {
-    void load();
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
+    const initialLoad = window.setTimeout(() => void load(), 0);
+    const t = window.setInterval(load, POLL_MS);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(t);
+    };
   }, [load]);
 
   const grouped: Record<SessionStatus, SessionRow[]> = {

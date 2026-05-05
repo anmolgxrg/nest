@@ -428,6 +428,8 @@ export function AgentKanbanApp() {
     ? `${signedInName} (${session.user.email})`
     : signedInName
   const signedInInitial = signedInName.trim().charAt(0).toUpperCase() || "C"
+  const signedInRole =
+    session.role.charAt(0).toUpperCase() + session.role.slice(1)
 
   return (
     <div className="flex h-screen min-h-0 bg-background text-foreground">
@@ -515,7 +517,7 @@ export function AgentKanbanApp() {
               Settings
             </Button>
             <div className="mt-2 truncate px-1 text-xs text-muted-foreground">
-              {signedInInitial} · {signedInName}
+              {signedInInitial} · {signedInName} · {signedInRole}
             </div>
           </div>
         )}
@@ -602,6 +604,7 @@ export function AgentKanbanApp() {
                   sessionId={session.id}
                   repositories={repositories}
                   models={models}
+                  canCreateAgents={session.permissions.createAgents}
                   onAgentCreated={handleAgentCreated}
                 />
               ) : (
@@ -623,6 +626,7 @@ export function AgentKanbanApp() {
                     reposError={reposError}
                     agents={visibleAgents}
                     repositoryOptions={repositories}
+                    canCreateAgents={session.permissions.createAgents}
                     onSelect={setSelectedAgent}
                     onCreateForRepo={(repo) => {
                       const option = findRepositoryOption(repo, repositories)
@@ -643,7 +647,10 @@ export function AgentKanbanApp() {
                 ) : showBoardLoading ? (
                   <BoardLoadingSkeleton />
                 ) : (
-                  <EmptyBoard onCreate={() => setIsCreateOpen(true)} />
+                  <EmptyBoard
+                    canCreateAgents={session.permissions.createAgents}
+                    onCreate={() => setIsCreateOpen(true)}
+                  />
                 )}
               </div>
             </ScrollArea>
@@ -651,7 +658,7 @@ export function AgentKanbanApp() {
         </section>
       </main>
 
-      {isCreateOpen ? (
+      {isCreateOpen && session.permissions.createAgents ? (
         <CreateAgentDialog
           sessionId={session.id}
           models={models}
@@ -678,9 +685,11 @@ export function AgentKanbanApp() {
           signedInName={signedInName}
           signedInLabel={signedInLabel}
           signedInInitial={signedInInitial}
+          signedInRole={signedInRole}
           repos={repos}
           reposError={reposError}
           reposLoading={reposLoading}
+          canManageRouting={session.permissions.manageRouting}
           onClose={() => setIsSettingsOpen(false)}
           onForgetKey={handleForgetKey}
           onRefreshRepos={loadRepos}
@@ -694,9 +703,11 @@ function SettingsDialog({
   signedInName,
   signedInLabel,
   signedInInitial,
+  signedInRole,
   repos,
   reposError,
   reposLoading,
+  canManageRouting,
   onClose,
   onForgetKey,
   onRefreshRepos,
@@ -704,9 +715,11 @@ function SettingsDialog({
   signedInName: string
   signedInLabel: string
   signedInInitial: string
+  signedInRole: string
   repos: Repo[]
   reposError: string | null
   reposLoading: boolean
+  canManageRouting: boolean
   onClose: () => void
   onForgetKey: () => Promise<void>
   onRefreshRepos: () => Promise<void>
@@ -766,6 +779,9 @@ function SettingsDialog({
                     <div className="truncate text-xs text-muted-foreground">
                       {signedInLabel}
                     </div>
+                    <Badge variant="secondary" className="mt-2 text-[10px]">
+                      {signedInRole}
+                    </Badge>
                   </div>
                 </div>
               </div>
@@ -786,6 +802,7 @@ function SettingsDialog({
                 repos={repos}
                 reposError={reposError}
                 reposLoading={reposLoading}
+                canManage={canManageRouting}
                 onRefresh={onRefreshRepos}
               />
             </div>
@@ -938,6 +955,7 @@ function SdmsBoardColumns({
   reposError,
   agents,
   repositoryOptions,
+  canCreateAgents,
   onSelect,
   onCreateForRepo,
 }: {
@@ -945,6 +963,7 @@ function SdmsBoardColumns({
   reposError: string | null
   agents: AgentCard[]
   repositoryOptions: RepositoryOption[]
+  canCreateAgents: boolean
   onSelect: (a: AgentCard) => void
   onCreateForRepo: (repo: Repo) => void
 }) {
@@ -986,7 +1005,9 @@ function SdmsBoardColumns({
             repo={repo}
             agents={buckets.get(`${repo.owner}/${repo.name}`) ?? []}
             onSelect={onSelect}
-            onCreate={linkable ? () => onCreateForRepo(repo) : undefined}
+            onCreate={
+              canCreateAgents && linkable ? () => onCreateForRepo(repo) : undefined
+            }
           />
         )
       })}
@@ -1102,11 +1123,13 @@ function RoutingPanel({
   repos,
   reposError,
   reposLoading,
+  canManage,
   onRefresh,
 }: {
   repos: Repo[]
   reposError: string | null
   reposLoading: boolean
+  canManage: boolean
   onRefresh: () => Promise<void>
 }) {
   const [actionError, setActionError] = React.useState<string | null>(null)
@@ -1187,7 +1210,13 @@ function RoutingPanel({
         </div>
       ) : null}
 
-      <AddRepoCard onSubmit={onUpsert} />
+      {canManage ? (
+        <AddRepoCard onSubmit={onUpsert} />
+      ) : (
+        <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          Admin access is required to add, edit, or delete repository routing.
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -1218,6 +1247,7 @@ function RoutingPanel({
                 })
               }
               onDelete={() => onDelete(r.id)}
+              canManage={canManage}
             />
           ))}
         </CardContent>
@@ -1327,6 +1357,7 @@ function RepoRow({
   repo,
   onSubmit,
   onDelete,
+  canManage,
 }: {
   repo: Repo
   onSubmit: (input: {
@@ -1335,6 +1366,7 @@ function RepoRow({
     description: string | null
   }) => Promise<boolean>
   onDelete: () => void
+  canManage: boolean
 }) {
   const [editing, setEditing] = React.useState(false)
   const [jiraKey, setJiraKey] = React.useState(repo.jira_project_key ?? "")
@@ -1390,26 +1422,28 @@ function RepoRow({
             </div>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {!editing ? (
+        {canManage ? (
+          <div className="flex shrink-0 items-center gap-1">
+            {!editing ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setEditing(true)}
+              >
+                edit
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
-              size="xs"
-              onClick={() => setEditing(true)}
+              size="icon-sm"
+              aria-label="Delete"
+              title="Delete"
+              onClick={onDelete}
             >
-              edit
+              <XIcon />
             </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Delete"
-            title="Delete"
-            onClick={onDelete}
-          >
-            <XIcon />
-          </Button>
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {editing ? (
@@ -1962,22 +1996,32 @@ function SidebarItem({
   )
 }
 
-function EmptyBoard({ onCreate }: { onCreate: () => void }) {
+function EmptyBoard({
+  canCreateAgents,
+  onCreate,
+}: {
+  canCreateAgents: boolean
+  onCreate: () => void
+}) {
   return (
     <div className="flex min-h-[50vh] flex-1 items-center justify-center">
       <Card className="w-full max-w-md text-center">
         <CardHeader>
           <CardTitle>No agents found</CardTitle>
           <CardDescription>
-            Create a cloud agent or adjust your search to populate the board.
+            {canCreateAgents
+              ? "Create a cloud agent or adjust your search to populate the board."
+              : "Operator access is required to create cloud agents."}
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <Button onClick={onCreate}>
-            <PlusIcon data-icon="inline-start" />
-            New agent
-          </Button>
-        </CardContent>
+        {canCreateAgents ? (
+          <CardContent>
+            <Button onClick={onCreate}>
+              <PlusIcon data-icon="inline-start" />
+              New agent
+            </Button>
+          </CardContent>
+        ) : null}
       </Card>
     </div>
   )

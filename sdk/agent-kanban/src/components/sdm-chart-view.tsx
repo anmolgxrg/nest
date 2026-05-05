@@ -137,11 +137,13 @@ export function SdmChartView({
   sessionId,
   repositories,
   models,
+  canCreateAgents,
   onAgentCreated,
 }: {
   sessionId: string
   repositories: RepositoryOption[]
   models: ModelOption[]
+  canCreateAgents: boolean
   onAgentCreated: (agent: AgentCard) => Promise<void>
 }) {
   const [draftTask, setDraftTask] = React.useState(sampleTask)
@@ -177,6 +179,7 @@ export function SdmChartView({
   const hasModels = models.length > 0
   const canLaunch =
     !launching &&
+    canCreateAgents &&
     Boolean(sessionId) &&
     Boolean(selectedRepositoryId) &&
     Boolean((activeTask || draftTask).trim())
@@ -218,10 +221,18 @@ export function SdmChartView({
     setLaunchedAgents([])
 
     try {
+      const sdmTask = await createSdmTaskRecord({
+        sessionId,
+        task,
+        repositoryId: selectedRepositoryId,
+        modelId: hasModels ? selectedModelId : "",
+        branch,
+      })
       const created: LaunchRecord[] = []
       for (const role of sdaRoles) {
         const response = await createCloudAgent({
           sessionId,
+          sdmTaskId: sdmTask.id,
           role,
           task,
           repositoryId: selectedRepositoryId,
@@ -362,7 +373,11 @@ export function SdmChartView({
               disabled={!canLaunch}
             >
               <UsersThreeIcon data-icon="inline-start" />
-              {launching ? "Launching SDAs..." : "Launch 6 cloud SDAs"}
+              {launching
+                ? "Launching SDAs..."
+                : canCreateAgents
+                  ? "Launch 6 cloud SDAs"
+                  : "Operator access required"}
             </Button>
             <Button variant="ghost" onClick={resetChart}>
               <ArrowClockwiseIcon data-icon="inline-start" />
@@ -725,6 +740,7 @@ function buildBrief(role: SdaRole, task: string) {
 
 async function createCloudAgent({
   sessionId,
+  sdmTaskId,
   role,
   task,
   repositoryId,
@@ -732,6 +748,7 @@ async function createCloudAgent({
   branch,
 }: {
   sessionId: string
+  sdmTaskId: string
   role: SdaRole
   task: string
   repositoryId: string
@@ -751,6 +768,9 @@ async function createCloudAgent({
       ...(modelId ? { modelId } : {}),
       branch: branch.trim() || "main",
       autoCreatePR: true,
+      sdmTaskId,
+      sdaRoleId: role.id,
+      sdaRoleTitle: role.title,
     }),
   })
   const payload = (await response.json().catch(() => ({}))) as
@@ -780,6 +800,43 @@ function buildCloudPrompt(role: SdaRole, task: string) {
     "",
     "Work only on your specialty. Keep changes focused, preserve unrelated work, and leave clear notes for the SDM and peer SDAs.",
   ].join("\n")
+}
+
+async function createSdmTaskRecord({
+  sessionId,
+  task,
+  repositoryId,
+  modelId,
+  branch,
+}: {
+  sessionId: string
+  task: string
+  repositoryId: string
+  modelId: string
+  branch: string
+}) {
+  const response = await fetch("/api/sdm/tasks", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agent-kanban-session": sessionId,
+    },
+    body: JSON.stringify({
+      task,
+      repositoryId,
+      ...(modelId ? { modelId } : {}),
+      branch: branch.trim() || "main",
+    }),
+  })
+  const payload = (await response.json().catch(() => ({}))) as
+    | { task?: { id?: string }; error?: string }
+    | undefined
+
+  if (!response.ok || !payload?.task?.id) {
+    throw new Error(payload?.error ?? "Failed to create the SDM task record.")
+  }
+
+  return { id: payload.task.id }
 }
 
 function taskTitle(task: string) {

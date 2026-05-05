@@ -7,6 +7,10 @@ create new cloud agents from a repository and prompt.
 This example demonstrates:
 
 - required API-key onboarding before any Cloud Agent data loads,
+- role-based access control for viewing agents, launching SDM/SDA work, and
+  managing routing,
+- durable SQLite records for SDM tasks, SDA launches, routing changes, and
+  audit logs,
 - cloud-agent listing with grouping by status, repository, branch, or created
   date,
 - agent cards with status, repo/branch metadata, latest activity, PR link, and
@@ -26,6 +30,11 @@ from the [Cursor integrations dashboard](https://cursor.com/dashboard/integratio
 If you keep "Remember this key" checked, the key is stored locally at
 `~/.agent-kanban/settings.json`; otherwise it is kept only in the in-memory app
 session.
+
+For a shared deployment, configure `NEST_ADMIN_EMAILS`,
+`NEST_OPERATOR_EMAILS`, `NEST_VIEWER_EMAILS`, or `NEST_ALLOWED_DOMAINS` in the
+server environment. Without an allowlist, a valid Cursor user is treated as an
+admin so local single-user installs keep working.
 
 ## Jetson Agent
 

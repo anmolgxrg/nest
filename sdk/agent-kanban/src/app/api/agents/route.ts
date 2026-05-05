@@ -1,8 +1,9 @@
 import { jsonError } from "@/lib/agents/http"
 import {
+  actorForSession,
   createCloudAgent,
   listCloudAgents,
-  requireSession,
+  requireRole,
 } from "@/lib/agents/server"
 import type { CreateAgentInput } from "@/lib/agents/types"
 
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic"
 
 export async function GET(request: Request) {
   try {
-    const session = await requireSession(request)
+    const session = await requireRole(request, "viewer")
     const url = new URL(request.url)
 
     return Response.json(
@@ -28,9 +29,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = await requireSession(request)
+    const session = await requireRole(request, "operator")
     const body = (await request.json()) as CreateAgentInput
-    return Response.json(await createCloudAgent(session.apiKey, body))
+    return Response.json(
+      await createCloudAgent(session.apiKey, body, actorForSession(session))
+    )
   } catch (error) {
     return jsonError(error, "Failed to create a cloud agent.")
   }

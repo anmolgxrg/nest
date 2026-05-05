@@ -94,7 +94,9 @@ export function ProjectsView() {
 
   React.useEffect(() => {
     let live = true;
-    setActivityLoading(true);
+    const loadingTimer = window.setTimeout(() => {
+      if (live) setActivityLoading(true);
+    }, 0);
     fetch(`/api/chaos/activity?range=${range}`, { cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -114,6 +116,7 @@ export function ProjectsView() {
       });
     return () => {
       live = false;
+      window.clearTimeout(loadingTimer);
     };
   }, [range]);
 

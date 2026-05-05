@@ -1,4 +1,5 @@
 import {
+  AuthorizationError,
   InvalidCursorApiKeyError,
   MissingCursorApiKeyError,
   UnknownSessionError,
@@ -8,14 +9,17 @@ export function jsonError(error: unknown, fallback: string) {
   if (
     error instanceof MissingCursorApiKeyError ||
     error instanceof InvalidCursorApiKeyError ||
-    error instanceof UnknownSessionError
+    error instanceof UnknownSessionError ||
+    error instanceof AuthorizationError
   ) {
     const status =
       error instanceof InvalidCursorApiKeyError
         ? 401
         : error instanceof UnknownSessionError
           ? 404
-          : 400
+          : error instanceof AuthorizationError
+            ? 403
+            : 400
 
     return Response.json(
       {

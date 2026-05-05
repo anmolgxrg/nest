@@ -71,6 +71,12 @@ export function AgentDetailsDialog({
   const [data, setData] = React.useState<WorkflowResponse | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const hasWorkflowLookup =
+    Boolean(agent.prUrl) || Boolean(agent.repositoryUrl && agent.branch)
+  const displayError = hasWorkflowLookup
+    ? error
+    : "Agent has no PR or branch metadata yet."
+  const displayLoading = hasWorkflowLookup ? loading : false
 
   React.useEffect(() => {
     const params = new URLSearchParams()
@@ -80,13 +86,13 @@ export function AgentDetailsDialog({
       params.set("repoUrl", agent.repositoryUrl)
       params.set("branch", agent.branch)
     } else {
-      setLoading(false)
-      setError("Agent has no PR or branch metadata yet.")
       return
     }
 
     let cancelled = false
-    setLoading(true)
+    const loadingTimer = window.setTimeout(() => {
+      if (!cancelled) setLoading(true)
+    }, 0)
     fetch(`/api/agents/${agent.id}/workflow?${params.toString()}`, {
       headers: { "x-session-id": sessionId },
     })
@@ -109,6 +115,7 @@ export function AgentDetailsDialog({
 
     return () => {
       cancelled = true
+      window.clearTimeout(loadingTimer)
     }
   }, [agent.id, agent.prUrl, agent.repositoryUrl, agent.branch, sessionId])
 
@@ -193,13 +200,13 @@ export function AgentDetailsDialog({
                 ) : null
               }
             >
-              {loading ? (
+              {displayLoading ? (
                 <p className="flex items-center gap-2 text-xs text-muted-foreground">
                   <CircleNotchIcon className="size-3.5 animate-spin" />
                   Loading workflow status…
                 </p>
-              ) : error ? (
-                <p className="text-xs text-destructive">{error}</p>
+              ) : displayError ? (
+                <p className="text-xs text-destructive">{displayError}</p>
               ) : data ? (
                 <WorkflowPanel data={data} />
               ) : null}

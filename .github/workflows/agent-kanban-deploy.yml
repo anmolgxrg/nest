@@ -1,0 +1,107 @@
+name: Agent Kanban Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy to trc3 when rollback_ref is empty"
+        required: true
+        default: "main"
+      rollback_ref:
+        description: "Emergency rollback ref. When set, local trc3 main is reset to this ref."
+        required: false
+        default: ""
+
+jobs:
+  gate:
+    name: Build, lint, test gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/agent-kanban
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rollback_ref != '' && inputs.rollback_ref || inputs.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: sdk/agent-kanban/pnpm-lock.yaml
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm run build
+
+  deploy:
+    name: Deploy trc3
+    runs-on: ubuntu-latest
+    needs: gate
+    steps:
+      - name: Configure SSH
+        env:
+          TRC3_SSH_HOST: ${{ secrets.TRC3_SSH_HOST }}
+          TRC3_SSH_KEY: ${{ secrets.TRC3_SSH_KEY }}
+          TRC3_SSH_PORT: ${{ secrets.TRC3_SSH_PORT }}
+          TRC3_SSH_USER: ${{ secrets.TRC3_SSH_USER }}
+        run: |
+          test -n "$TRC3_SSH_HOST"
+          test -n "$TRC3_SSH_KEY"
+          test -n "$TRC3_SSH_USER"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$TRC3_SSH_KEY" > ~/.ssh/trc3_key
+          chmod 600 ~/.ssh/trc3_key
+          ssh-keyscan -p "${TRC3_SSH_PORT:-22}" "$TRC3_SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy checked ref
+        env:
+          DEPLOY_REF: ${{ inputs.ref }}
+          ROLLBACK_REF: ${{ inputs.rollback_ref }}
+          TRC3_SSH_HOST: ${{ secrets.TRC3_SSH_HOST }}
+          TRC3_SSH_PORT: ${{ secrets.TRC3_SSH_PORT }}
+          TRC3_SSH_USER: ${{ secrets.TRC3_SSH_USER }}
+        run: |
+          target_ref="${ROLLBACK_REF:-$DEPLOY_REF}"
+          ssh -i ~/.ssh/trc3_key -p "${TRC3_SSH_PORT:-22}" "$TRC3_SSH_USER@$TRC3_SSH_HOST" \
+            bash -s -- "$target_ref" "$ROLLBACK_REF" <<'REMOTE'
+          set -euo pipefail
+          TARGET_REF="$1"
+          ROLLBACK_REF="$2"
+          cd /srv/cookbook
+          git fetch origin --tags
+          git checkout main
+          if [ -n "${ROLLBACK_REF:-}" ]; then
+            git reset --hard "$TARGET_REF"
+          else
+            git pull --ff-only origin "$TARGET_REF"
+          fi
+          pnpm -C sdk/agent-kanban install --frozen-lockfile
+          pnpm -C sdk/agent-kanban run typecheck
+          pnpm -C sdk/agent-kanban run lint
+          pnpm -C sdk/agent-kanban test
+          pnpm -C sdk/agent-kanban run build
+          if command -v sudo >/dev/null 2>&1; then
+            sudo systemctl restart agent-kanban
+          else
+            systemctl restart agent-kanban
+          fi
+          curl -fsS http://127.0.0.1:3210/ >/dev/null
+          REMOTE

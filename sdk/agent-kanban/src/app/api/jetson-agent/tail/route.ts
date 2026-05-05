@@ -3,18 +3,19 @@ import {
   jetsonAgentRequest,
   loadJetsonAgentConfig,
 } from "@/lib/jetson-agent/client"
+import { requireRole } from "@/lib/agents/server"
 import type { JetsonTailResponse } from "@/lib/jetson-agent/types"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request) {
-  const cfg = loadJetsonAgentConfig()
-  if (!cfg.configured) {
-    return Response.json({ error: cfg.reason }, { status: 503 })
-  }
-
   try {
+    await requireRole(request, "viewer")
+    const cfg = loadJetsonAgentConfig()
+    if (!cfg.configured) {
+      return Response.json({ error: cfg.reason }, { status: 503 })
+    }
     const incoming = new URL(request.url)
     const query = new URLSearchParams()
     const lines = incoming.searchParams.get("lines")

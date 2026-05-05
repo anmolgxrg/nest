@@ -6,6 +6,8 @@ import path from "node:path"
 import { Agent, Cursor } from "@cursor/sdk"
 
 import type {
+  AppPermissions,
+  AppRole,
   AgentCard,
   AgentListResponse,
   ArtifactPreview,
@@ -16,14 +18,16 @@ import type {
   PublicUser,
   RepositoryOption,
 } from "./types"
+import { auditEvent, recordSdaLaunch } from "@/lib/nest-store"
 
 type Settings = {
   cursorApiKey?: string
 }
 
-type Session = {
+export type Session = {
   id: string
   apiKey: string
+  role: AppRole
   user: PublicUser | null
 }
 
@@ -88,6 +92,11 @@ globalForAgentKanban.__agentKanbanRepositoryCache = repositoryCache
 
 const agentSdk = Agent as unknown as AgentNamespace
 const cursorSdk = Cursor as CursorNamespace
+const roleRank: Record<AppRole, number> = {
+  viewer: 0,
+  operator: 1,
+  admin: 2,
+}
 
 export class MissingCursorApiKeyError extends Error {
   readonly code = "missing_api_key"
@@ -116,11 +125,22 @@ export class UnknownSessionError extends Error {
   }
 }
 
+export class AuthorizationError extends Error {
+  readonly code = "forbidden"
+
+  constructor(message = "You do not have permission to perform this action.") {
+    super(message)
+    this.name = "AuthorizationError"
+  }
+}
+
 export function publicSession(session: Session): PublicSession {
   return {
     id: session.id,
     user: session.user,
     hasPersistedKey: false,
+    role: session.role,
+    permissions: permissionsForRole(session.role),
   }
 }
 
@@ -135,12 +155,24 @@ export async function createSession(
     await writeSettings({ cursorApiKey: trimmedKey })
   }
 
+  const user = await getCurrentUser(trimmedKey)
+  const role = resolveRole(user)
+  assertRole(role, "viewer")
+
   const session: Session = {
     id: randomUUID(),
     apiKey: trimmedKey,
-    user: await getCurrentUser(trimmedKey),
+    role,
+    user,
   }
   sessions.set(session.id, session)
+  auditEvent({
+    actor: actorForSession(session),
+    action: "session.create",
+    resourceType: "session",
+    resourceId: session.id,
+    metadata: { remembered: remember },
+  })
 
   return {
     ...publicSession(session),
@@ -163,12 +195,23 @@ export async function restoreSession(sessionId?: string): Promise<PublicSession>
 
   await validateCursorApiKey(persistedApiKey)
 
+  const user = await getCurrentUser(persistedApiKey)
+  const role = resolveRole(user)
+  assertRole(role, "viewer")
+
   const session: Session = {
     id: randomUUID(),
     apiKey: persistedApiKey,
-    user: await getCurrentUser(persistedApiKey),
+    role,
+    user,
   }
   sessions.set(session.id, session)
+  auditEvent({
+    actor: actorForSession(session),
+    action: "session.restore",
+    resourceType: "session",
+    resourceId: session.id,
+  })
 
   return {
     ...publicSession(session),
@@ -200,6 +243,86 @@ export async function requireSession(request: Request): Promise<Session> {
   }
 
   return restoredSession
+}
+
+export async function requireRole(
+  request: Request,
+  minimumRole: AppRole
+): Promise<Session> {
+  const session = await requireSession(request)
+  assertRole(session.role, minimumRole)
+  return session
+}
+
+export function actorForSession(session: Session) {
+  return {
+    role: session.role,
+    sessionId: session.id,
+    userEmail: session.user?.email,
+    userName: session.user?.name,
+  }
+}
+
+function assertRole(actual: AppRole, minimum: AppRole) {
+  if (roleRank[actual] < roleRank[minimum]) {
+    throw new AuthorizationError(
+      `This action requires ${minimum} access. Your role is ${actual}.`
+    )
+  }
+}
+
+function permissionsForRole(role: AppRole): AppPermissions {
+  return {
+    createAgents: roleRank[role] >= roleRank.operator,
+    manageRouting: role === "admin",
+    useJetsonAgent: roleRank[role] >= roleRank.operator,
+    viewAgents: roleRank[role] >= roleRank.viewer,
+  }
+}
+
+function resolveRole(user: PublicUser | null): AppRole {
+  const email = user?.email?.trim().toLowerCase()
+  const domain = email?.split("@")[1]
+  const admins = envList("NEST_ADMIN_EMAILS")
+  const operators = envList("NEST_OPERATOR_EMAILS")
+  const viewers = envList("NEST_VIEWER_EMAILS")
+  const allowedDomains = envList("NEST_ALLOWED_DOMAINS")
+  const hasExplicitPolicy =
+    admins.length > 0 ||
+    operators.length > 0 ||
+    viewers.length > 0 ||
+    allowedDomains.length > 0
+
+  if (email && admins.includes(email)) return "admin"
+  if (email && operators.includes(email)) return "operator"
+  if (email && viewers.includes(email)) return "viewer"
+
+  if (domain && allowedDomains.includes(domain)) {
+    return envRole("NEST_DEFAULT_ROLE", "operator")
+  }
+
+  // Keep existing single-user installs usable until the deployment defines
+  // an explicit allowlist. Once any NEST_* RBAC env var is set, unknown
+  // users are denied by assertRole below.
+  if (!hasExplicitPolicy) {
+    return "admin"
+  }
+
+  throw new AuthorizationError("This Cursor account is not allowed in NEST.")
+}
+
+function envList(name: string) {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function envRole(name: string, fallback: AppRole): AppRole {
+  const value = process.env[name]?.trim().toLowerCase()
+  return value === "admin" || value === "operator" || value === "viewer"
+    ? value
+    : fallback
 }
 
 function getCookie(request: Request, name: string) {
@@ -261,7 +384,8 @@ export async function listCloudAgents(
 
 export async function createCloudAgent(
   apiKey: string,
-  input: CreateAgentInput
+  input: CreateAgentInput,
+  actor?: ReturnType<typeof actorForSession>
 ): Promise<CreateAgentResponse> {
   const prompt = input.prompt.trim()
   if (!prompt) {
@@ -296,6 +420,29 @@ export async function createCloudAgent(
   card.branch = input.branch?.trim() || repository.defaultBranch
   card.latestMessage = prompt
   card.artifacts = await listArtifactsForAgent(apiKey, card.id).catch(() => [])
+  auditEvent({
+    actor,
+    action: "agent.create",
+    resourceType: "cursor_agent",
+    resourceId: card.id,
+    metadata: {
+      branch: card.branch,
+      modelId: input.modelId,
+      repositoryId: input.repositoryId,
+      sdaRoleId: input.sdaRoleId,
+      sdmTaskId: input.sdmTaskId,
+    },
+  })
+  if (input.sdmTaskId || input.sdaRoleId) {
+    recordSdaLaunch({
+      taskId: input.sdmTaskId,
+      roleId: input.sdaRoleId,
+      roleTitle: input.sdaRoleTitle,
+      agentId: card.id,
+      agentTitle: card.title,
+      status: card.status,
+    })
+  }
 
   return { agent: card }
 }

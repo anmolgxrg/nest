@@ -1,5 +1,12 @@
 import "server-only"
 
+import {
+  AuthorizationError,
+  InvalidCursorApiKeyError,
+  MissingCursorApiKeyError,
+  UnknownSessionError,
+} from "@/lib/agents/server"
+
 type JetsonAgentConfig =
   | {
       configured: true
@@ -88,6 +95,27 @@ export async function jetsonAgentRequest<T>(
 }
 
 export function jetsonAgentJsonError(error: unknown): Response {
+  if (
+    error instanceof MissingCursorApiKeyError ||
+    error instanceof InvalidCursorApiKeyError ||
+    error instanceof UnknownSessionError ||
+    error instanceof AuthorizationError
+  ) {
+    const status =
+      error instanceof InvalidCursorApiKeyError
+        ? 401
+        : error instanceof UnknownSessionError
+          ? 404
+          : error instanceof AuthorizationError
+            ? 403
+            : 400
+
+    return Response.json(
+      { code: error.code, error: error.message },
+      { status },
+    )
+  }
+
   if (error instanceof JetsonAgentError) {
     return Response.json({ error: error.message }, { status: error.status })
   }
