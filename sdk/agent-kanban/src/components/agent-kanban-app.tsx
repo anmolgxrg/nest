@@ -77,8 +77,6 @@ type SelectableGroupOption = GroupOption & {
 }
 
 type SidebarFilter =
-  | "all"
-  | "prAgents"
   | "sdms"
   | "chart"
   | "jetsonAgent"
@@ -190,8 +188,6 @@ const sidebarFilters: {
   label: string
   icon: IconComponent
 }[] = [
-  { id: "all", label: "All agents", icon: CirclesFourIcon },
-  { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
   { id: "chart", label: "Chart", icon: CirclesFourIcon },
   { id: "jetsonAgent", label: "Jetson agent", icon: TerminalWindowIcon },
@@ -235,7 +231,7 @@ export function AgentKanbanApp() {
   const [repositories, setRepositories] = React.useState<RepositoryOption[]>([])
   const [models, setModels] = React.useState<ModelOption[]>([])
   const [groupBy, setGroupBy] = React.useState<GroupBy>(defaultGroupBy)
-  const [sidebarFilter, setSidebarFilter] = React.useState<SidebarFilter>("all")
+  const [sidebarFilter, setSidebarFilter] = React.useState<SidebarFilter>("sdms")
   const [query, setQuery] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -2067,10 +2063,6 @@ function searchAgents(agents: AgentCard[], query: string) {
 }
 
 function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
-  if (filter === "prAgents") {
-    return agents.filter((agent) => Boolean(agent.prUrl))
-  }
-
   if (filter === "sdms") {
     return agents.filter((agent) => isAgentActive(agent.status))
   }
