@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { spawnSync } from "node:child_process"
 import { mkdirSync } from "node:fs"
 import { createRequire } from "node:module"
 import os from "node:os"
@@ -181,10 +182,7 @@ function getDatabase() {
   }
 
   mkdirSync(path.dirname(dbPath), { recursive: true })
-  const { DatabaseSync } = require("node:sqlite") as {
-    DatabaseSync: DatabaseConstructor
-  }
-  db = new DatabaseSync(dbPath)
+  db = createDatabase(dbPath)
   db.exec("pragma journal_mode = wal")
   db.exec("pragma foreign_keys = on")
   db.exec(`
@@ -253,4 +251,84 @@ function getDatabase() {
       on routing_changes(repo_id);
   `)
   return db
+}
+
+function createDatabase(filename: string): DatabaseSync {
+  try {
+    const { DatabaseSync } = require("node:sqlite") as {
+      DatabaseSync: DatabaseConstructor
+    }
+    return new DatabaseSync(filename)
+  } catch {
+    return new SqliteCliDatabase(filename)
+  }
+}
+
+class SqliteCliDatabase implements DatabaseSync {
+  constructor(private filename: string) {}
+
+  exec(sql: string) {
+    this.call([], sql)
+  }
+
+  prepare(sql: string) {
+    return {
+      get: (...values: unknown[]) => {
+        const rows = this.query(sql, values)
+        return rows[0]
+      },
+      run: (...values: unknown[]) => {
+        this.call([], bindSql(sql, values))
+      },
+    }
+  }
+
+  private query(sql: string, values: unknown[]) {
+    const output = this.call(["-json"], bindSql(sql, values))
+    if (!output.trim()) {
+      return []
+    }
+    return JSON.parse(output) as unknown[]
+  }
+
+  private call(args: string[], input: string) {
+    const result = spawnSync("sqlite3", [...args, this.filename], {
+      encoding: "utf8",
+      input,
+      maxBuffer: 1024 * 1024,
+    })
+    if (result.error) {
+      throw result.error
+    }
+    if (result.status !== 0) {
+      throw new Error(result.stderr.trim() || "sqlite3 command failed")
+    }
+    return result.stdout
+  }
+}
+
+function bindSql(sql: string, values: unknown[]) {
+  let index = 0
+  return sql.replace(/\?/g, () => {
+    if (index >= values.length) {
+      throw new Error("Not enough SQLite bind values.")
+    }
+    return quoteSqlValue(values[index++])
+  })
+}
+
+function quoteSqlValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return "null"
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error("Cannot bind a non-finite number to SQLite.")
+    }
+    return String(value)
+  }
+  if (typeof value === "boolean") {
+    return value ? "1" : "0"
+  }
+  return `'${String(value).replace(/'/g, "''")}'`
 }
