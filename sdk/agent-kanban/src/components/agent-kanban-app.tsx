@@ -9,8 +9,8 @@ import {
   ClockIcon,
   FileIcon,
   FolderIcon,
+  GearSixIcon,
   GitBranchIcon,
-  ImageSquareIcon,
   KanbanIcon,
   LinkIcon,
   MagnifyingGlassIcon,
@@ -49,6 +49,7 @@ import { OrgActivityView } from "@/components/chaos/org-activity-view"
 import { ProjectsView } from "@/components/chaos/projects-view"
 import { UserSdasView } from "@/components/chaos/user-sdas-view"
 import { JetsonAgentView } from "@/components/jetson-agent-view"
+import { SdmChartView } from "@/components/sdm-chart-view"
 import { Textarea } from "@/components/ui/textarea"
 import type {
   AgentCard,
@@ -77,11 +78,10 @@ type SelectableGroupOption = GroupOption & {
 
 type SidebarFilter =
   | "all"
-  | "withArtifacts"
   | "prAgents"
   | "sdms"
+  | "chart"
   | "jetsonAgent"
-  | "routing"
   | "projects"
   | "userSdas"
   | "orgActivity"
@@ -191,12 +191,11 @@ const sidebarFilters: {
   icon: IconComponent
 }[] = [
   { id: "all", label: "All agents", icon: CirclesFourIcon },
-  { id: "withArtifacts", label: "With artifacts", icon: ImageSquareIcon },
   { id: "prAgents", label: "PR agents", icon: GitBranchIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
+  { id: "chart", label: "Chart", icon: CirclesFourIcon },
   { id: "jetsonAgent", label: "Jetson agent", icon: TerminalWindowIcon },
   { id: "userSdas", label: "User SDAs", icon: TerminalWindowIcon },
-  { id: "routing", label: "Routing", icon: GitBranchIcon },
   { id: "orgActivity", label: "Org activity", icon: PulseIcon },
   { id: "projects", label: "By project", icon: FolderIcon },
 ]
@@ -209,6 +208,7 @@ const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set([
   "userSdas",
   "orgActivity",
   "jetsonAgent",
+  "chart",
 ])
 
 const boardLoadingColumns: {
@@ -252,6 +252,7 @@ export function AgentKanbanApp() {
   const [repos, setRepos] = React.useState<Repo[]>([])
   const [reposError, setReposError] = React.useState<string | null>(null)
   const [reposLoading, setReposLoading] = React.useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
 
   const loadBoard = React.useCallback(async (sessionId: string) => {
     setIsLoading(true)
@@ -326,18 +327,18 @@ export function AgentKanbanApp() {
   }, [])
 
   // Lazy-load the repo list the first time the user opens any repo-driven
-  // view (SDMs or Routing). They share the same source of truth — the
-  // bridge — so a single fetch hydrates both.
+  // view. SDMs and Settings share the bridge as the source of truth, so a
+  // single fetch hydrates both.
   React.useEffect(() => {
     const repoView =
       sidebarFilter === "sdms" ||
-      sidebarFilter === "routing" ||
-      sidebarFilter === "jetsonAgent"
+      sidebarFilter === "jetsonAgent" ||
+      isSettingsOpen
     if (!repoView) return
     if (repos.length > 0 || reposLoading) return
     const id = window.setTimeout(() => void loadRepos(), 0)
     return () => window.clearTimeout(id)
-  }, [sidebarFilter, repos.length, reposLoading, loadRepos])
+  }, [sidebarFilter, isSettingsOpen, repos.length, reposLoading, loadRepos])
 
   async function handleSessionCreated(nextSession: PublicSession) {
     window.localStorage.setItem(sessionStorageKey, nextSession.id)
@@ -393,15 +394,12 @@ export function AgentKanbanApp() {
     ...item,
     count: CHAOS_FILTERS.has(item.id)
       ? undefined
-      : item.id === "routing"
-        ? repos.length
-        : filterAgentsBySidebar(searchedAgents, item.id).length,
+      : filterAgentsBySidebar(searchedAgents, item.id).length,
   }))
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupBy)
   const SelectedGroupIcon = selectedGroupOption?.icon
   const isSdmsView = sidebarFilter === "sdms"
-  const isRoutingView = sidebarFilter === "routing"
-  const isReposView = isSdmsView || isRoutingView
+  const isReposView = isSdmsView
   const isChaosView = CHAOS_FILTERS.has(sidebarFilter)
   const groups = isReposView
     ? []
@@ -479,37 +477,30 @@ export function AgentKanbanApp() {
         <Separator />
         {isSidebarCollapsed ? (
           <div className="flex flex-col items-center gap-2 p-2">
-            <div
-              className="flex size-9 items-center justify-center rounded-lg border bg-background/60 text-sm font-medium"
-              aria-label={`Signed in as ${signedInLabel}`}
-              title={`Signed in as ${signedInLabel}`}
-            >
-              {signedInInitial}
-            </div>
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={handleForgetKey}
-              aria-label="Forget API key"
-              title="Forget API key"
+              onClick={() => setIsSettingsOpen(true)}
+              aria-label={`Settings, signed in as ${signedInLabel}`}
+              title={`Settings, signed in as ${signedInLabel}`}
             >
-              <SignOutIcon />
+              <GearSixIcon />
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-2 p-3">
-            <div className="rounded-lg border bg-background/60 p-3">
-              <div className="text-xs font-medium text-muted-foreground">Signed in</div>
-              <div className="mt-1 truncate text-sm">{signedInName}</div>
-              {session.user?.email ? (
-                <div className="truncate text-xs text-muted-foreground">
-                  {session.user.email}
-                </div>
-              ) : null}
-            </div>
-            <Button variant="ghost" size="sm" onClick={handleForgetKey}>
-              Forget API key
+          <div className="p-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => setIsSettingsOpen(true)}
+            >
+              <GearSixIcon data-icon="inline-start" />
+              Settings
             </Button>
+            <div className="mt-2 truncate px-1 text-xs text-muted-foreground">
+              {signedInInitial} · {signedInName}
+            </div>
           </div>
         )}
       </aside>
@@ -614,6 +605,13 @@ export function AgentKanbanApp() {
                 <OrgActivityView />
               ) : sidebarFilter === "userSdas" ? (
                 <UserSdasView />
+              ) : sidebarFilter === "chart" ? (
+                <SdmChartView
+                  sessionId={session.id}
+                  repositories={repositories}
+                  models={models}
+                  onAgentCreated={handleAgentCreated}
+                />
               ) : (
                 <JetsonAgentView
                   configuredRepos={repos}
@@ -623,15 +621,6 @@ export function AgentKanbanApp() {
                   onRefreshRepos={loadRepos}
                 />
               )}
-            </ScrollArea>
-          ) : isRoutingView ? (
-            <ScrollArea className="min-h-0 flex-1">
-              <RoutingPanel
-                repos={repos}
-                reposError={reposError}
-                reposLoading={reposLoading}
-                onRefresh={loadRepos}
-              />
             </ScrollArea>
           ) : (
             <ScrollArea className="min-h-0 flex-1">
@@ -691,6 +680,126 @@ export function AgentKanbanApp() {
           onClose={() => setSelectedAgent(null)}
         />
       ) : null}
+
+      {isSettingsOpen ? (
+        <SettingsDialog
+          signedInName={signedInName}
+          signedInLabel={signedInLabel}
+          signedInInitial={signedInInitial}
+          repos={repos}
+          reposError={reposError}
+          reposLoading={reposLoading}
+          onClose={() => setIsSettingsOpen(false)}
+          onForgetKey={handleForgetKey}
+          onRefreshRepos={loadRepos}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function SettingsDialog({
+  signedInName,
+  signedInLabel,
+  signedInInitial,
+  repos,
+  reposError,
+  reposLoading,
+  onClose,
+  onForgetKey,
+  onRefreshRepos,
+}: {
+  signedInName: string
+  signedInLabel: string
+  signedInInitial: string
+  repos: Repo[]
+  reposError: string | null
+  reposLoading: boolean
+  onClose: () => void
+  onForgetKey: () => Promise<void>
+  onRefreshRepos: () => Promise<void>
+}) {
+  const [forgetting, setForgetting] = React.useState(false)
+
+  async function handleForgetKey() {
+    setForgetting(true)
+    await onForgetKey()
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+      <Card
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        className="max-h-[92vh] w-full max-w-5xl overflow-hidden shadow-2xl"
+      >
+        <CardHeader className="border-b">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle id="settings-title">Settings</CardTitle>
+              <CardDescription>
+                Account controls and repository routing for NEST.
+              </CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onClose}
+              aria-label="Close settings"
+              title="Close settings"
+            >
+              <XIcon />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="max-h-[calc(92vh-5rem)] overflow-y-auto p-0">
+          <div className="grid min-h-[560px] lg:grid-cols-[280px_minmax(0,1fr)]">
+            <aside className="border-b bg-muted/20 p-4 lg:border-b-0 lg:border-r">
+              <div className="rounded-lg border bg-background p-3">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-sm font-semibold"
+                    aria-hidden="true"
+                  >
+                    {signedInInitial}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      Signed in as
+                    </div>
+                    <div className="truncate text-sm font-medium">
+                      {signedInName}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {signedInLabel}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="mt-3 w-full justify-start"
+                onClick={() => void handleForgetKey()}
+                disabled={forgetting}
+              >
+                <SignOutIcon data-icon="inline-start" />
+                {forgetting ? "Forgetting..." : "Forget API key"}
+              </Button>
+            </aside>
+
+            <div className="min-w-0">
+              <RoutingPanel
+                repos={repos}
+                reposError={reposError}
+                reposLoading={reposLoading}
+                onRefresh={onRefreshRepos}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -858,7 +967,8 @@ function SdmsBoardColumns({
   if (repos.length === 0) {
     return (
       <div className="m-4 text-sm text-muted-foreground">
-        No repositories yet. Add one in <span className="font-medium">Routing</span>.
+        No repositories yet. Add one in{" "}
+        <span className="font-medium">Settings</span>.
       </div>
     )
   }
@@ -1957,10 +2067,6 @@ function searchAgents(agents: AgentCard[], query: string) {
 }
 
 function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
-  if (filter === "withArtifacts") {
-    return agents.filter((agent) => agent.artifacts.length > 0)
-  }
-
   if (filter === "prAgents") {
     return agents.filter((agent) => Boolean(agent.prUrl))
   }
@@ -1969,8 +2075,6 @@ function filterAgentsBySidebar(agents: AgentCard[], filter: SidebarFilter) {
     return agents.filter((agent) => isAgentActive(agent.status))
   }
 
-  // Routing has no per-agent filter — its count is repo-driven and is
-  // overridden in the sidebar render path.
   return agents
 }
 
