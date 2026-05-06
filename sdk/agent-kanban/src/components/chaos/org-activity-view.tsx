@@ -591,9 +591,6 @@ function PersonLocChart({
     [visiblePoints],
   );
   const axisTicks = React.useMemo(() => locAxisTicks(axisMax), [axisMax]);
-  const hasVisibleOwnedLinesDropped = visiblePoints.some(
-    (point) => point.removedFromMe > 0,
-  );
 
   if (err) {
     return (
@@ -612,14 +609,14 @@ function PersonLocChart({
 
   const hasData =
     data.totalAdditions > 0 ||
-    data.totalRemovedFromMe > 0;
+    data.totalDeletions > 0;
 
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <div>
           <div className="text-sm font-medium">
-            Lines added / owned lines dropped
+            Lines added / lines removed
           </div>
           <div className="text-xs text-muted-foreground">
             Last {visiblePoints.length} week
@@ -634,9 +631,9 @@ function PersonLocChart({
             </span>
           </div>
           <div>
-            <span className="text-muted-foreground">owned lines dropped </span>
+            <span className="text-muted-foreground">lines removed </span>
             <span className="font-medium text-[#ef4444]">
-              {formatLoc(data.totalRemovedFromMe)}
+              {formatLoc(data.totalDeletions)}
             </span>
           </div>
         </div>
@@ -659,7 +656,7 @@ function PersonLocChart({
                   <stop offset="100%" stopColor={ADDED_COLOR} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient
-                  id="g-person-owned-dropped"
+                  id="g-person-removed"
                   x1="0"
                   y1="0"
                   x2="0"
@@ -691,21 +688,19 @@ function PersonLocChart({
                 width={48}
               />
               <Tooltip content={<PersonTooltip />} />
-              {hasVisibleOwnedLinesDropped ? (
-                <Area
-                  yAxisId="loc"
-                  type="monotone"
-                  dataKey="removedFromMe"
-                  name="Owned lines dropped"
-                  stroke={REMOVED_COLOR}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                  fill="url(#g-person-owned-dropped)"
-                  isAnimationActive
-                  animationDuration={600}
-                />
-              ) : null}
+              <Area
+                yAxisId="loc"
+                type="monotone"
+                dataKey="deletions"
+                name="Lines removed"
+                stroke={REMOVED_COLOR}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+                fill="url(#g-person-removed)"
+                isAnimationActive
+                animationDuration={600}
+              />
               <Area
                 yAxisId="loc"
                 type="monotone"
@@ -739,8 +734,8 @@ function PersonTooltip({
   if (!active || !payload || payload.length === 0 || !label) return null;
   const pt = payload[0]?.payload;
   const added = pt?.additions ?? payload[0]?.value ?? 0;
-  const removedFromMe = pt?.removedFromMe ?? 0;
-  if (added === 0 && removedFromMe === 0) return null;
+  const removed = pt?.deletions ?? 0;
+  if (added === 0 && removed === 0) return null;
   return (
     <div className="rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm">
       <div className="mb-1 font-medium">{formatDate(label)}</div>
@@ -754,18 +749,16 @@ function PersonTooltip({
           {formatLoc(added)}
         </span>
       </div>
-      {removedFromMe > 0 ? (
-        <div className="mt-0.5 flex items-center gap-2">
-          <span
-            className="size-1.5 rounded-full"
-            style={{ background: REMOVED_COLOR }}
-          />
-          <span>owned lines dropped</span>
-          <span className="ml-auto tabular-nums text-muted-foreground">
-            {formatLoc(removedFromMe)}
-          </span>
-        </div>
-      ) : null}
+      <div className="mt-0.5 flex items-center gap-2">
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: REMOVED_COLOR }}
+        />
+        <span>lines removed</span>
+        <span className="ml-auto tabular-nums text-muted-foreground">
+          {formatLoc(removed)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -773,7 +766,7 @@ function PersonTooltip({
 function locAxisMax(points: WeekPoint[]): number {
   const maxValue = points.reduce(
     (max, point) =>
-      Math.max(max, point.additions ?? 0, point.removedFromMe ?? 0),
+      Math.max(max, point.additions ?? 0, point.deletions ?? 0),
     0,
   );
   return Math.max(LOC_AXIS_STEP, Math.ceil(maxValue / LOC_AXIS_STEP) * LOC_AXIS_STEP);
