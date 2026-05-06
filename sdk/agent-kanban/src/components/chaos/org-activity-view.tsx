@@ -540,6 +540,7 @@ interface PersonLocPayload {
 
 const ADDED_COLOR = "#3b82f6";
 const REMOVED_COLOR = "#ef4444";
+const LOC_AXIS_STEP = 5_000;
 
 function PersonLocChart({
   personId,
@@ -583,6 +584,11 @@ function PersonLocChart({
     if (spec === "all" || spec === undefined) return data.points;
     return data.points.slice(-spec);
   }, [data, range]);
+  const axisMax = React.useMemo(
+    () => locAxisMax(visiblePoints),
+    [visiblePoints],
+  );
+  const axisTicks = React.useMemo(() => locAxisTicks(axisMax), [axisMax]);
 
   if (err) {
     return (
@@ -668,7 +674,10 @@ function PersonLocChart({
                 tickLine={false}
               />
               <YAxis
-                yAxisId="added"
+                yAxisId="loc"
+                orientation="right"
+                domain={[0, axisMax]}
+                ticks={axisTicks}
                 tickFormatter={formatLoc}
                 stroke="rgba(20,20,19,0.4)"
                 tick={{ fontSize: 10 }}
@@ -676,19 +685,9 @@ function PersonLocChart({
                 tickLine={false}
                 width={40}
               />
-              <YAxis
-                yAxisId="dropped"
-                orientation="right"
-                tickFormatter={formatLoc}
-                stroke={REMOVED_COLOR}
-                tick={{ fontSize: 10, fill: REMOVED_COLOR }}
-                axisLine={false}
-                tickLine={false}
-                width={40}
-              />
               <Tooltip content={<PersonTooltip />} />
               <Area
-                yAxisId="dropped"
+                yAxisId="loc"
                 type="monotone"
                 dataKey="removedFromMe"
                 name="Owned lines dropped"
@@ -701,7 +700,7 @@ function PersonLocChart({
                 animationDuration={600}
               />
               <Area
-                yAxisId="added"
+                yAxisId="loc"
                 type="monotone"
                 dataKey="additions"
                 name="Lines added"
@@ -760,6 +759,28 @@ function PersonTooltip({
       </div>
     </div>
   );
+}
+
+function locAxisMax(points: WeekPoint[]): number {
+  const maxValue = points.reduce(
+    (max, point) =>
+      Math.max(max, point.additions ?? 0, point.removedFromMe ?? 0),
+    0,
+  );
+  return Math.max(LOC_AXIS_STEP, Math.ceil(maxValue / LOC_AXIS_STEP) * LOC_AXIS_STEP);
+}
+
+function locAxisTicks(axisMax: number): number[] {
+  const maxIntervals = 8;
+  const intervalCount = Math.max(1, Math.ceil(axisMax / LOC_AXIS_STEP));
+  const step =
+    LOC_AXIS_STEP * Math.max(1, Math.ceil(intervalCount / maxIntervals));
+  const ticks: number[] = [];
+  for (let tick = 0; tick < axisMax; tick += step) {
+    ticks.push(tick);
+  }
+  ticks.push(axisMax);
+  return ticks;
 }
 
 // ───────────────────────── Feature drawer ─────────────────────────
