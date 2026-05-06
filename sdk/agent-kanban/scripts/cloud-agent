@@ -35,6 +35,9 @@ Environment:
   CLOUD_AGENT_SESSION           tmux session, default: ai
   CLOUD_AGENT_WORKDIR           tmux session workdir, default: $HOME/src on Jetson
   CLOUD_AGENT_REPO              repo used when starting Codex, default: $HOME/src/ChefOS
+  CLOUD_AGENT_DANGEROUS_PERMISSIONS
+                                default: 1. Starts agent CLIs with non-interactive
+                                permission bypass flags when possible.
   CLOUD_AGENT_LOCAL_PORT        local tunnel port, default: 8787
   CLOUD_AGENT_REMOTE_PORT       Jetson console port, default: 8787
 USAGE
@@ -52,6 +55,7 @@ remote_assignments() {
   printf 'CLOUD_AGENT_SESSION=%s ' "$(shq "$SESSION")"
   printf 'CLOUD_AGENT_CLAUDE_WINDOW=%s ' "$(shq "$CLAUDE_WINDOW")"
   printf 'CLOUD_AGENT_CODEX_WINDOW=%s ' "$(shq "$CODEX_WINDOW")"
+  printf 'CLOUD_AGENT_DANGEROUS_PERMISSIONS=%s ' "$(shq "${CLOUD_AGENT_DANGEROUS_PERMISSIONS:-1}")"
   if [ -n "$WORKDIR" ]; then
     printf 'CLOUD_AGENT_WORKDIR=%s ' "$(shq "$WORKDIR")"
   fi
@@ -86,6 +90,7 @@ export PATH="$HOME/.local/bin:$HOME/.local/share/micromamba/envs/ai-agents/bin:$
 session="${CLOUD_AGENT_SESSION:-ai}"
 workdir="${CLOUD_AGENT_WORKDIR:-$HOME/src}"
 repo="${CLOUD_AGENT_REPO:-$HOME/src/ChefOS}"
+dangerous="${CLOUD_AGENT_DANGEROUS_PERMISSIONS:-1}"
 tmux_bin="$HOME/.local/share/micromamba/envs/ai-agents/bin/tmux"
 if [ -x "$HOME/.local/bin/tmux" ]; then
   tmux_bin="$HOME/.local/bin/tmux"
@@ -107,9 +112,23 @@ claude_script='
 window="${CLOUD_AGENT_CLAUDE_WINDOW:-Claude}"
 mkdir -p "$workdir"
 if [ -x "$HOME/.local/bin/claude-agent" ]; then
-  "$HOME/.local/bin/claude-agent" >/dev/null
+  CLOUD_AGENT_DANGEROUS_PERMISSIONS="$dangerous" "$HOME/.local/bin/claude-agent" >/dev/null
 else
   "$tmux_bin" has-session -t "$session" 2>/dev/null || "$tmux_bin" new-session -d -s "$session" -c "$workdir"
+  if ! "$tmux_bin" list-windows -t "$session" -F "#{window_name}" | grep -Fx "$window" >/dev/null; then
+    "$tmux_bin" new-window -t "$session" -n "$window" -c "$workdir"
+  fi
+  pane="$("$tmux_bin" list-panes -t "$session:$window" -F "#{pane_id}" | head -n 1)"
+  cmd="$("$tmux_bin" display-message -p -t "$pane" "#{pane_current_command}" 2>/dev/null || true)"
+  case "$cmd" in
+    bash|zsh|sh|fish)
+      if [ "$dangerous" = "0" ]; then
+        "$tmux_bin" send-keys -t "$pane" "claude" C-m
+      else
+        "$tmux_bin" send-keys -t "$pane" "claude --dangerously-skip-permissions" C-m
+      fi
+      ;;
+  esac
 fi
 "$tmux_bin" select-window -t "$session:$window" 2>/dev/null || true
 if [ -x "$HOME/.local/bin/ai" ]; then
@@ -131,7 +150,11 @@ cmd="$("$tmux_bin" display-message -p -t "$pane" "#{pane_current_command}" 2>/de
 case "$cmd" in
   bash|zsh|sh|fish)
     quoted_repo="$(printf "%q" "$repo")"
-    "$tmux_bin" send-keys -t "$pane" "cd $quoted_repo && codex" C-m
+    if [ "$dangerous" = "0" ]; then
+      "$tmux_bin" send-keys -t "$pane" "cd $quoted_repo && codex" C-m
+    else
+      "$tmux_bin" send-keys -t "$pane" "cd $quoted_repo && codex --dangerously-bypass-approvals-and-sandbox" C-m
+    fi
     ;;
 esac
 "$tmux_bin" select-window -t "$session:$window" 2>/dev/null || true
@@ -172,7 +195,7 @@ prompt() {
   printf '%s' "$prompt_text" | ssh_plain "$(remote_assignments) bash -lc $(shq '
 set -euo pipefail
 export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
-exec "$HOME/.local/bin/claude-prompt"
+CLOUD_AGENT_DANGEROUS_PERMISSIONS="${CLOUD_AGENT_DANGEROUS_PERMISSIONS:-1}" exec "$HOME/.local/bin/claude-prompt"
 ')"
 }
 

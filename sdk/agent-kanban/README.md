@@ -11,6 +11,7 @@ This example demonstrates:
   managing routing,
 - durable SQLite records for SDM tasks, SDA launches, routing changes, and
   audit logs,
+- launch targets for Cursor Cloud Agents and the Jetson autonomous agent,
 - cloud-agent listing with grouping by status, repository, branch, or created
   date,
 - agent cards with status, repo/branch metadata, latest activity, PR link, and
@@ -54,6 +55,11 @@ The token stays on the Next.js server. The browser talks only to
 and also includes the Routing page repositories when `BRIDGE_URL` and
 `BRIDGE_ADMIN_TOKEN` are configured.
 
+The create-agent dialog and SDM chart both support a `Jetson` runtime. Jetson
+launches are stored in `~/.agent-kanban/nest.db` and shown on the main board
+next to Cursor Cloud Agents. NEST wraps Jetson prompts with autonomous operating
+instructions so browser-launched work does not block on yes/no prompts.
+
 ### CLI
 
 Install the local shims once:
@@ -75,6 +81,10 @@ cloud agent tunnel
 The CLI uses SSH to `jensen` and the existing tmux/helper scripts on Jetson. It
 does not store or print the web-console token unless you explicitly run
 `cloud agent token`.
+
+By default the CLI starts Claude/Codex with dangerous non-interactive permission
+flags when it can. Set `CLOUD_AGENT_DANGEROUS_PERMISSIONS=0` before running
+`cloud-agent` if you need the old interactive confirmation behavior.
 
 ## Notes
 

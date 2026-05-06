@@ -52,6 +52,7 @@ import { SdmChartView } from "@/components/sdm-chart-view"
 import { Textarea } from "@/components/ui/textarea"
 import type {
   AgentCard,
+  AgentRuntime,
   AgentListResponse,
   CreateAgentResponse,
   ModelOption,
@@ -1752,6 +1753,7 @@ function CreateAgentDialog({
 }) {
   const [name, setName] = React.useState("")
   const [prompt, setPrompt] = React.useState("")
+  const [runtime, setRuntime] = React.useState<AgentRuntime>("cursor")
   const [repositoryId, setRepositoryId] = React.useState(
     initialRepositoryId ?? repositories[0]?.id ?? "",
   )
@@ -1761,30 +1763,47 @@ function CreateAgentDialog({
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const selectedRepositoryId = repositoryId || repositories[0]?.id || ""
+  const selectedRepository = repositories.find(
+    (repository) => repository.id === selectedRepositoryId,
+  )
   const hasModels = models.length > 0
   const selectedModelId = modelId || models[0]?.id || ""
+  const isJetsonRuntime = runtime === "jetson"
+  const canSubmit =
+    prompt.trim().length > 0 &&
+    !isSubmitting &&
+    (isJetsonRuntime || Boolean(selectedRepositoryId))
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsSubmitting(true)
     setError(null)
     try {
-      const response = await apiFetch<CreateAgentResponse>("/api/agents", sessionId, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          prompt,
-          repositoryId: selectedRepositoryId,
-          ...(hasModels && selectedModelId ? { modelId: selectedModelId } : {}),
-          branch,
-          autoCreatePR,
-        }),
-      })
+      const response = await apiFetch<CreateAgentResponse>(
+        isJetsonRuntime ? "/api/jetson-agent/launch" : "/api/agents",
+        sessionId,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runtime,
+            name,
+            prompt,
+            repositoryId: selectedRepositoryId,
+            repositoryLabel: selectedRepository?.label,
+            repositoryUrl: selectedRepository?.url,
+            ...(hasModels && selectedModelId && !isJetsonRuntime
+              ? { modelId: selectedModelId }
+              : {}),
+            branch,
+            autoCreatePR: isJetsonRuntime ? false : autoCreatePR,
+          }),
+        },
+      )
       await onCreated(response.agent)
       onClose()
     } catch (submitError) {
-      setError(errorMessage(submitError, "Failed to create a cloud agent."))
+      setError(errorMessage(submitError, "Failed to create an agent."))
     } finally {
       setIsSubmitting(false)
     }
@@ -1801,9 +1820,9 @@ function CreateAgentDialog({
         <CardHeader className="border-b">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <CardTitle id="create-agent-title">Create cloud agent</CardTitle>
+              <CardTitle id="create-agent-title">Create agent</CardTitle>
               <CardDescription>
-                Start a Cursor Cloud Agent from a repository and prompt.
+                Start a Cursor Cloud Agent or Jetson agent from a prompt.
               </CardDescription>
             </div>
             <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
@@ -1822,7 +1841,38 @@ function CreateAgentDialog({
               />
             </label>
 
-            <div className={cn("grid gap-4", hasModels && "md:grid-cols-2")}>
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Runtime
+              <Select
+                items={[
+                  { label: "Cursor Cloud", value: "cursor" },
+                  { label: "Jetson", value: "jetson" },
+                ]}
+                value={runtime}
+                onValueChange={(value) => {
+                  if (value === "cursor" || value === "jetson") {
+                    setRuntime(value)
+                  }
+                }}
+              >
+                <SelectTrigger aria-label="Agent runtime" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    <SelectItem value="cursor">Cursor Cloud</SelectItem>
+                    <SelectItem value="jetson">Jetson</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </label>
+
+            <div
+              className={cn(
+                "grid gap-4",
+                hasModels && !isJetsonRuntime && "md:grid-cols-2",
+              )}
+            >
               <label className="flex flex-col gap-2 text-sm font-medium">
                 Repository
                 <Select
@@ -1837,7 +1887,11 @@ function CreateAgentDialog({
                     }
                   }}
                 >
-                  <SelectTrigger aria-label="Repository" className="w-full">
+                  <SelectTrigger
+                    aria-label="Repository"
+                    className="w-full"
+                    disabled={repositories.length === 0}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent align="start">
@@ -1852,7 +1906,7 @@ function CreateAgentDialog({
                 </Select>
               </label>
 
-              {hasModels ? (
+              {hasModels && !isJetsonRuntime ? (
                 <label className="flex flex-col gap-2 text-sm font-medium">
                   Model
                   <Select
@@ -1904,17 +1958,19 @@ function CreateAgentDialog({
               />
             </label>
 
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                className="size-4 accent-primary"
-                checked={autoCreatePR}
-                onChange={(event) => setAutoCreatePR(event.target.checked)}
-              />
-              Auto-create a pull request when the agent completes
-            </label>
+            {!isJetsonRuntime ? (
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  checked={autoCreatePR}
+                  onChange={(event) => setAutoCreatePR(event.target.checked)}
+                />
+                Auto-create a pull request when the agent completes
+              </label>
+            ) : null}
 
-            {repositories.length === 0 ? (
+            {repositories.length === 0 && !isJetsonRuntime ? (
               <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                 No repositories were returned by the SDK. Check your Cursor and
                 GitHub integration permissions.
@@ -1933,9 +1989,13 @@ function CreateAgentDialog({
               </Button>
               <Button
                 type="submit"
-                disabled={!prompt.trim() || !selectedRepositoryId || isSubmitting}
+                disabled={!canSubmit}
               >
-                {isSubmitting ? "Creating..." : "Create agent"}
+                {isSubmitting
+                  ? "Creating..."
+                  : isJetsonRuntime
+                    ? "Create Jetson agent"
+                    : "Create agent"}
               </Button>
             </div>
           </form>

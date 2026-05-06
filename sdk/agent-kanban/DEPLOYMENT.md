@@ -31,6 +31,7 @@ The database records:
 
 - `sdm_tasks` for SDM task requests.
 - `sda_launches` for the six launched Software Development Agents.
+- `jetson_agent_launches` for browser-launched Jetson work.
 - `routing_changes` for repository/Jira routing mutations.
 - `audit_log` for sessions, agent creation, routing views, and routing writes.
 
@@ -49,6 +50,23 @@ NEST_DEFAULT_ROLE="operator"
 
 If no RBAC allowlist variables are set, NEST keeps local single-user behavior
 and treats a valid Cursor user as `admin`.
+
+## Jetson Agent
+
+Jetson launches require both server-side variables:
+
+```bash
+JETSON_AGENT_BASE_URL="http://127.0.0.1:<forwarded-agent-console-port>"
+JETSON_AGENT_TOKEN="<token from ssh jensen '~/.local/bin/agent-console-token'>"
+```
+
+Do not point `JETSON_AGENT_BASE_URL` at the bridge service. `BRIDGE_URL` and
+`JETSON_AGENT_BASE_URL` are separate services even if they have historically
+used nearby ports.
+
+The `cloud-agent` helper defaults `CLOUD_AGENT_DANGEROUS_PERMISSIONS=1`, which
+starts Claude/Codex with non-interactive permission bypass flags when possible.
+Set it to `0` only for manual sessions where a human can answer CLI prompts.
 
 ## Rollback
 

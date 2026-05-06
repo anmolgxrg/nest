@@ -58,6 +58,38 @@ export type RoutingChangeInput = {
   removed?: boolean
 }
 
+export type JetsonAgentLaunchInput = {
+  actor?: AuditActor
+  title: string
+  prompt: string
+  repositoryLabel?: string
+  repositoryUrl?: string
+  branch?: string
+  sdmTaskId?: string
+  sdaRoleId?: string
+  sdaRoleTitle?: string
+  tail?: string
+}
+
+export type JetsonAgentLaunchRecord = {
+  id: string
+  created_at: string
+  updated_at: string
+  created_by_email: string | null
+  created_by_name: string | null
+  created_by_role: string | null
+  title: string
+  prompt: string
+  repository_label: string
+  repository_url: string | null
+  branch: string | null
+  status: string
+  sdm_task_id: string | null
+  sda_role_id: string | null
+  sda_role_title: string | null
+  tail: string | null
+}
+
 const storeDir = path.join(os.homedir(), ".agent-kanban")
 const dbPath = process.env.NEST_DB_PATH?.trim() || path.join(storeDir, "nest.db")
 const require = createRequire(import.meta.url)
@@ -176,6 +208,61 @@ export function recordRoutingChange(input: RoutingChangeInput) {
   return id
 }
 
+export function recordJetsonAgentLaunch(input: JetsonAgentLaunchInput) {
+  const database = getDatabase()
+  const id = `jetson-${randomUUID()}`
+  const now = new Date().toISOString()
+  database.prepare(
+    `insert into jetson_agent_launches (
+      id, created_at, updated_at, created_by_email, created_by_name,
+      created_by_role, title, prompt, repository_label, repository_url,
+      branch, status, sdm_task_id, sda_role_id, sda_role_title, tail
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    now,
+    now,
+    input.actor?.userEmail ?? null,
+    input.actor?.userName ?? null,
+    input.actor?.role ?? null,
+    input.title,
+    input.prompt,
+    input.repositoryLabel ?? "Jetson",
+    input.repositoryUrl ?? null,
+    input.branch?.trim() || null,
+    "sent",
+    input.sdmTaskId ?? null,
+    input.sdaRoleId ?? null,
+    input.sdaRoleTitle ?? null,
+    input.tail ?? null,
+  )
+  return getJetsonAgentLaunch(id)
+}
+
+export function listJetsonAgentLaunches(): JetsonAgentLaunchRecord[] {
+  const database = getDatabase()
+  return (
+    database
+      .prepare(
+        `select * from jetson_agent_launches
+        order by created_at desc
+        limit 100`
+      )
+      .all?.() as JetsonAgentLaunchRecord[] | undefined
+  ) ?? []
+}
+
+function getJetsonAgentLaunch(id: string) {
+  const database = getDatabase()
+  const record = database
+    .prepare("select * from jetson_agent_launches where id = ?")
+    .get?.(id) as JetsonAgentLaunchRecord | undefined
+  if (!record) {
+    throw new Error("Failed to record Jetson agent launch.")
+  }
+  return record
+}
+
 function getDatabase() {
   if (db) {
     return db
@@ -239,6 +326,26 @@ function getDatabase() {
       removed integer
     );
 
+    create table if not exists jetson_agent_launches (
+      id text primary key,
+      created_at text not null,
+      updated_at text not null,
+      created_by_email text,
+      created_by_name text,
+      created_by_role text,
+      title text not null,
+      prompt text not null,
+      repository_label text not null,
+      repository_url text,
+      branch text,
+      status text not null,
+      sdm_task_id text,
+      sda_role_id text,
+      sda_role_title text,
+      tail text,
+      foreign key (sdm_task_id) references sdm_tasks(id)
+    );
+
     create index if not exists idx_audit_log_created_at
       on audit_log(created_at);
     create index if not exists idx_sdm_tasks_created_at
@@ -249,6 +356,10 @@ function getDatabase() {
       on routing_changes(created_at);
     create index if not exists idx_routing_changes_repo_id
       on routing_changes(repo_id);
+    create index if not exists idx_jetson_agent_launches_created_at
+      on jetson_agent_launches(created_at);
+    create index if not exists idx_jetson_agent_launches_sdm_task_id
+      on jetson_agent_launches(sdm_task_id);
   `)
   return db
 }
@@ -273,6 +384,7 @@ class SqliteCliDatabase implements DatabaseSync {
 
   prepare(sql: string) {
     return {
+      all: (...values: unknown[]) => this.query(sql, values),
       get: (...values: unknown[]) => {
         const rows = this.query(sql, values)
         return rows[0]

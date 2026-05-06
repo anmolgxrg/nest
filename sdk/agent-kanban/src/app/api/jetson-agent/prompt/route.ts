@@ -27,11 +27,25 @@ export async function POST(request: Request) {
       "/api/prompt",
       {
         method: "POST",
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: buildAutonomousPrompt(prompt) }),
       },
     )
     return Response.json(result)
   } catch (error) {
     return jetsonAgentJsonError(error)
   }
+}
+
+function buildAutonomousPrompt(prompt: string) {
+  return [
+    "You are the Jetson autonomous software development agent controlled from NEST.",
+    "Run independently. Do not wait for the browser user to answer interactive permission prompts.",
+    "Use non-interactive execution paths and dangerous/skip-permission CLI modes when a local agent CLI would otherwise block on confirmation.",
+    "You have permission to inspect files, edit code, run builds/tests, commit, and push when the task requires it.",
+    "",
+    "Task:",
+    prompt,
+    "",
+    "Report progress in the terminal output and leave a concise final status when finished.",
+  ].join("\n")
 }

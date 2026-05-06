@@ -32,25 +32,23 @@ export function loadJetsonAgentConfig(): JetsonAgentConfig {
   const baseUrl = (
     process.env.JETSON_AGENT_BASE_URL ??
     process.env.AGENT_CONSOLE_BASE_URL ??
-    "http://127.0.0.1:8787"
-  )
-    .trim()
-    .replace(/\/+$/, "")
+    ""
+  ).trim()
   const token = (
     process.env.JETSON_AGENT_TOKEN ??
     process.env.AGENT_CONSOLE_TOKEN ??
     ""
   ).trim()
 
-  if (!token) {
+  if (!baseUrl || !token) {
     return {
       configured: false,
       reason:
-        "JETSON_AGENT_TOKEN must be set in the agent-kanban server environment. Get it with: ssh jensen '~/.local/bin/agent-console-token'.",
+        "JETSON_AGENT_BASE_URL and JETSON_AGENT_TOKEN must be set in the agent-kanban server environment. Get the token with: ssh jensen '~/.local/bin/agent-console-token'.",
     }
   }
 
-  return { configured: true, baseUrl, token }
+  return { configured: true, baseUrl: baseUrl.replace(/\/+$/, ""), token }
 }
 
 export async function jetsonAgentRequest<T>(

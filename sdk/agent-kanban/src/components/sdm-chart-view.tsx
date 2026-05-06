@@ -29,6 +29,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import type {
   AgentCard,
+  AgentRuntime,
   CreateAgentResponse,
   ModelOption,
   RepositoryOption,
@@ -150,6 +151,7 @@ export function SdmChartView({
   const [activeTask, setActiveTask] = React.useState("")
   const [status, setStatus] = React.useState<TeamStatus>("idle")
   const [selectedSdaId, setSelectedSdaId] = React.useState(sdaRoles[0].id)
+  const [runtime, setRuntime] = React.useState<AgentRuntime>("cursor")
   const [repositoryId, setRepositoryId] = React.useState(repositories[0]?.id ?? "")
   const [modelId, setModelId] = React.useState(models[0]?.id ?? "")
   const [branch, setBranch] = React.useState("main")
@@ -175,13 +177,17 @@ export function SdmChartView({
     nodes.find((node) => node.id === selectedSdaId) ?? nodes[0]
   const capacity = status === "active" ? 6 : status === "assigned" ? 0 : 0
   const selectedRepositoryId = repositoryId || repositories[0]?.id || ""
+  const selectedRepository = repositories.find(
+    (repository) => repository.id === selectedRepositoryId,
+  )
   const selectedModelId = modelId || models[0]?.id || ""
   const hasModels = models.length > 0
+  const isJetsonRuntime = runtime === "jetson"
   const canLaunch =
     !launching &&
     canCreateAgents &&
     Boolean(sessionId) &&
-    Boolean(selectedRepositoryId) &&
+    (isJetsonRuntime || Boolean(selectedRepositoryId)) &&
     Boolean((activeTask || draftTask).trim())
 
   function assignTask() {
@@ -210,7 +216,7 @@ export function SdmChartView({
 
   async function launchCloudSdas() {
     const task = (activeTask || draftTask).trim()
-    if (!task || !selectedRepositoryId) {
+    if (!task || (!isJetsonRuntime && !selectedRepositoryId)) {
       return
     }
 
@@ -224,21 +230,32 @@ export function SdmChartView({
       const sdmTask = await createSdmTaskRecord({
         sessionId,
         task,
-        repositoryId: selectedRepositoryId,
-        modelId: hasModels ? selectedModelId : "",
+        repositoryId: selectedRepositoryId || "jetson-current",
+        modelId: hasModels && !isJetsonRuntime ? selectedModelId : "",
         branch,
       })
       const created: LaunchRecord[] = []
       for (const role of sdaRoles) {
-        const response = await createCloudAgent({
-          sessionId,
-          sdmTaskId: sdmTask.id,
-          role,
-          task,
-          repositoryId: selectedRepositoryId,
-          modelId: hasModels ? selectedModelId : "",
-          branch,
-        })
+        const response = isJetsonRuntime
+          ? await createJetsonAgent({
+              sessionId,
+              sdmTaskId: sdmTask.id,
+              role,
+              task,
+              repositoryId: selectedRepositoryId,
+              repositoryLabel: selectedRepository?.label,
+              repositoryUrl: selectedRepository?.url,
+              branch,
+            })
+          : await createCloudAgent({
+              sessionId,
+              sdmTaskId: sdmTask.id,
+              role,
+              task,
+              repositoryId: selectedRepositoryId,
+              modelId: hasModels ? selectedModelId : "",
+              branch,
+            })
         created.push({
           roleId: role.id,
           agentId: response.agent.id,
@@ -283,7 +300,37 @@ export function SdmChartView({
                 placeholder="Assign the SDM a product task..."
               />
             </label>
-            <div className={cn("grid gap-3", hasModels && "md:grid-cols-2")}>
+            <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">
+              Runtime
+              <Select
+                items={[
+                  { label: "Cursor Cloud", value: "cursor" },
+                  { label: "Jetson", value: "jetson" },
+                ]}
+                value={runtime}
+                onValueChange={(value) => {
+                  if (value === "cursor" || value === "jetson") {
+                    setRuntime(value)
+                  }
+                }}
+              >
+                <SelectTrigger aria-label="SDA runtime" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    <SelectItem value="cursor">Cursor Cloud</SelectItem>
+                    <SelectItem value="jetson">Jetson</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </label>
+            <div
+              className={cn(
+                "grid gap-3",
+                hasModels && !isJetsonRuntime && "md:grid-cols-2",
+              )}
+            >
               <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">
                 Repository
                 <Select
@@ -298,7 +345,11 @@ export function SdmChartView({
                     }
                   }}
                 >
-                  <SelectTrigger aria-label="Repository" className="w-full">
+                  <SelectTrigger
+                    aria-label="Repository"
+                    className="w-full"
+                    disabled={repositories.length === 0}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent align="start">
@@ -313,7 +364,7 @@ export function SdmChartView({
                 </Select>
               </label>
 
-              {hasModels ? (
+              {hasModels && !isJetsonRuntime ? (
                 <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">
                   Model
                   <Select
@@ -376,14 +427,16 @@ export function SdmChartView({
               {launching
                 ? "Launching SDAs..."
                 : canCreateAgents
-                  ? "Launch 6 cloud SDAs"
+                  ? isJetsonRuntime
+                    ? "Launch 6 Jetson SDAs"
+                    : "Launch 6 cloud SDAs"
                   : "Operator access required"}
             </Button>
             <Button variant="ghost" onClick={resetChart}>
               <ArrowClockwiseIcon data-icon="inline-start" />
               Reset chart
             </Button>
-            {repositories.length === 0 ? (
+            {repositories.length === 0 && !isJetsonRuntime ? (
               <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                 No linked repositories are available for cloud launch.
               </div>
@@ -782,6 +835,58 @@ async function createCloudAgent({
       "error" in payload && payload.error
         ? payload.error
         : `Failed to create ${role.shortTitle} SDA.`,
+    )
+  }
+
+  return payload as CreateAgentResponse
+}
+
+async function createJetsonAgent({
+  sessionId,
+  sdmTaskId,
+  role,
+  task,
+  repositoryId,
+  repositoryLabel,
+  repositoryUrl,
+  branch,
+}: {
+  sessionId: string
+  sdmTaskId: string
+  role: SdaRole
+  task: string
+  repositoryId: string
+  repositoryLabel?: string
+  repositoryUrl?: string
+  branch: string
+}): Promise<CreateAgentResponse> {
+  const response = await fetch("/api/jetson-agent/launch", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agent-kanban-session": sessionId,
+    },
+    body: JSON.stringify({
+      name: `Jetson SDA ${role.shortTitle}: ${taskTitle(task)}`,
+      prompt: buildCloudPrompt(role, task),
+      repositoryId,
+      repositoryLabel,
+      repositoryUrl,
+      branch: branch.trim() || "main",
+      sdmTaskId,
+      sdaRoleId: role.id,
+      sdaRoleTitle: role.title,
+    }),
+  })
+  const payload = (await response.json().catch(() => ({}))) as
+    | CreateAgentResponse
+    | { error?: string }
+
+  if (!response.ok) {
+    throw new Error(
+      "error" in payload && payload.error
+        ? payload.error
+        : `Failed to create Jetson ${role.shortTitle} SDA.`,
     )
   }
 

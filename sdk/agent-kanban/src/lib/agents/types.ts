@@ -35,6 +35,8 @@ export type RepositoryOption = {
   defaultBranch?: string
 }
 
+export type AgentRuntime = "cursor" | "jetson"
+
 export type ArtifactPreview = {
   path: string
   name: string
@@ -67,6 +69,7 @@ export type AgentListResponse = {
 }
 
 export type CreateAgentInput = {
+  runtime?: AgentRuntime
   name?: string
   prompt: string
   repositoryId: string
