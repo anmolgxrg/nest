@@ -238,6 +238,13 @@ export async function restoreSession(sessionId?: string): Promise<PublicSession>
   }
   assertRole(role, "viewer")
 
+  await writeSettings({
+    ...settings,
+    cursorApiKey: persistedApiKey,
+    cursorRole: role,
+    cursorUser: user,
+  }).catch(() => undefined)
+
   const session: Session = {
     id: randomUUID(),
     apiKey: persistedApiKey,
