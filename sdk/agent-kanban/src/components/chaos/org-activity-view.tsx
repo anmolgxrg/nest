@@ -10,9 +10,9 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -607,7 +607,9 @@ function PersonLocChart({
     <Card className="p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <div>
-          <div className="text-sm font-medium">Lines added vs removed</div>
+          <div className="text-sm font-medium">
+            Lines added / owned lines dropped
+          </div>
           <div className="text-xs text-muted-foreground">
             Last {visiblePoints.length} week
             {visiblePoints.length === 1 ? "" : "s"}
@@ -621,7 +623,7 @@ function PersonLocChart({
             </span>
           </div>
           <div>
-            <span className="text-muted-foreground">lines removed </span>
+            <span className="text-muted-foreground">owned lines dropped </span>
             <span className="font-medium text-[#ef4444]">
               {formatLoc(data.totalRemovedFromMe)}
             </span>
@@ -636,10 +638,26 @@ function PersonLocChart({
       ) : (
         <div className="-ml-2 h-48">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart
+            <AreaChart
               data={visiblePoints}
               margin={{ top: 6, right: 6, left: 0, bottom: 0 }}
             >
+              <defs>
+                <linearGradient id="g-person-added" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={ADDED_COLOR} stopOpacity={0.28} />
+                  <stop offset="100%" stopColor={ADDED_COLOR} stopOpacity={0} />
+                </linearGradient>
+                <linearGradient
+                  id="g-person-owned-dropped"
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop offset="0%" stopColor={REMOVED_COLOR} stopOpacity={0.24} />
+                  <stop offset="100%" stopColor={REMOVED_COLOR} stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid stroke="rgba(20,20,19,0.06)" vertical={false} />
               <XAxis
                 dataKey="date"
@@ -650,6 +668,7 @@ function PersonLocChart({
                 tickLine={false}
               />
               <YAxis
+                yAxisId="added"
                 tickFormatter={formatLoc}
                 stroke="rgba(20,20,19,0.4)"
                 tick={{ fontSize: 10 }}
@@ -657,8 +676,32 @@ function PersonLocChart({
                 tickLine={false}
                 width={40}
               />
+              <YAxis
+                yAxisId="dropped"
+                orientation="right"
+                tickFormatter={formatLoc}
+                stroke={REMOVED_COLOR}
+                tick={{ fontSize: 10, fill: REMOVED_COLOR }}
+                axisLine={false}
+                tickLine={false}
+                width={40}
+              />
               <Tooltip content={<PersonTooltip />} />
-              <Line
+              <Area
+                yAxisId="dropped"
+                type="monotone"
+                dataKey="removedFromMe"
+                name="Owned lines dropped"
+                stroke={REMOVED_COLOR}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+                fill="url(#g-person-owned-dropped)"
+                isAnimationActive
+                animationDuration={600}
+              />
+              <Area
+                yAxisId="added"
                 type="monotone"
                 dataKey="additions"
                 name="Lines added"
@@ -666,21 +709,11 @@ function PersonLocChart({
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 4 }}
+                fill="url(#g-person-added)"
                 isAnimationActive
                 animationDuration={600}
               />
-              <Line
-                type="monotone"
-                dataKey="removedFromMe"
-                name="Lines removed"
-                stroke={REMOVED_COLOR}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-                isAnimationActive
-                animationDuration={600}
-              />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -720,7 +753,7 @@ function PersonTooltip({
           className="size-1.5 rounded-full"
           style={{ background: REMOVED_COLOR }}
         />
-        <span>lines removed</span>
+        <span>owned lines dropped</span>
         <span className="ml-auto tabular-nums text-muted-foreground">
           {formatLoc(removedFromMe)}
         </span>
