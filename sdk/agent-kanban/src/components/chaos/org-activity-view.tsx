@@ -54,14 +54,53 @@ const WEEKS_FOR_RANGE: Record<Range, number | "all"> = {
 };
 
 type Tab = "byproject" | "byday" | "byperson";
+const orgActivityRangeStorageKey = "agent-kanban-org-activity-range";
+const orgActivityTabStorageKey = "agent-kanban-org-activity-tab";
+const orgActivityPersonStorageKey = "agent-kanban-org-activity-person";
+
+function readStoredRange(): Range {
+  if (typeof window === "undefined") return "7d";
+  const stored = window.localStorage.getItem(orgActivityRangeStorageKey);
+  return isRange(stored) ? stored : "7d";
+}
+
+function readStoredTab(): Tab {
+  if (typeof window === "undefined") return "byproject";
+  const stored = window.localStorage.getItem(orgActivityTabStorageKey);
+  return isTab(stored) ? stored : "byproject";
+}
+
+function readStoredPersonId(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(orgActivityPersonStorageKey);
+}
+
+function isRange(value: unknown): value is Range {
+  return (
+    typeof value === "string" &&
+    RANGE_OPTIONS.some((option) => option.key === value)
+  );
+}
+
+function isTab(value: unknown): value is Tab {
+  return value === "byproject" || value === "byday" || value === "byperson";
+}
 
 export function OrgActivityView() {
-  const [range, setRange] = React.useState<Range>("7d");
-  const [tab, setTab] = React.useState<Tab>("byproject");
+  const [range, setRange] = React.useState<Range>(readStoredRange);
+  const [tab, setTab] = React.useState<Tab>(readStoredTab);
   const [data, setData] = React.useState<ActivityPayload | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [featureId, setFeatureId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(orgActivityRangeStorageKey, range);
+  }, [range]);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(orgActivityTabStorageKey, tab);
+  }, [tab]);
 
   React.useEffect(() => {
     let live = true;
@@ -322,8 +361,18 @@ function ByPerson({
   data: ActivityPayload;
   onSelectFeature: (id: string) => void;
 }) {
-  const [selected, setSelected] = React.useState<string | null>(null);
+  const [selected, setSelected] = React.useState<string | null>(
+    readStoredPersonId,
+  );
   const [page, setPage] = React.useState(1);
+
+  React.useEffect(() => {
+    if (selected) {
+      window.localStorage.setItem(orgActivityPersonStorageKey, selected);
+    } else {
+      window.localStorage.removeItem(orgActivityPersonStorageKey);
+    }
+  }, [selected]);
 
   const rollupsByPerson = React.useMemo(() => {
     const m = new Map<string, Rollup[]>();
@@ -417,7 +466,10 @@ function ByPerson({
       <button
         key={p.id}
         type="button"
-        onClick={() => setSelected(p.id)}
+        onClick={() => {
+          setSelected(p.id);
+          setPage(1);
+        }}
         className="rounded-lg border bg-card p-4 text-left transition-colors hover:bg-muted/60"
       >
         <div className="flex items-center gap-3">
@@ -540,9 +592,11 @@ interface PersonLocPayload {
 
 const ADDED_COLOR = "#3b82f6";
 const REMOVED_COLOR = "#ef4444";
+const REMOVED_FROM_ME_COLOR = "#eab308";
 const AXIS_TEXT_COLOR = "rgba(245,245,245,0.62)";
 const GRID_COLOR = "rgba(245,245,245,0.08)";
-const LOC_AXIS_STEP = 5_000;
+const LOC_AXIS_STEP = 10_000;
+const LOC_AXIS_MIN_MAX = 400_000;
 
 function PersonLocChart({
   personId,
@@ -609,21 +663,22 @@ function PersonLocChart({
 
   const hasData =
     data.totalAdditions > 0 ||
-    data.totalDeletions > 0;
+    data.totalDeletions > 0 ||
+    data.totalRemovedFromMe > 0;
 
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <div>
           <div className="text-sm font-medium">
-            Lines added / lines removed
+            Lines added / removed / removed from me
           </div>
           <div className="text-xs text-muted-foreground">
             Last {visiblePoints.length} week
             {visiblePoints.length === 1 ? "" : "s"}
           </div>
         </div>
-        <div className="flex gap-4 text-xs tabular-nums">
+        <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-xs tabular-nums">
           <div>
             <span className="text-muted-foreground">lines added </span>
             <span className="font-medium text-[#3b82f6]">
@@ -634,6 +689,12 @@ function PersonLocChart({
             <span className="text-muted-foreground">lines removed </span>
             <span className="font-medium text-[#ef4444]">
               {formatLoc(data.totalDeletions)}
+            </span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">removed from me </span>
+            <span className="font-medium text-[#eab308]">
+              {formatLoc(data.totalRemovedFromMe)}
             </span>
           </div>
         </div>
@@ -665,6 +726,24 @@ function PersonLocChart({
                   <stop offset="0%" stopColor={REMOVED_COLOR} stopOpacity={0.24} />
                   <stop offset="100%" stopColor={REMOVED_COLOR} stopOpacity={0} />
                 </linearGradient>
+                <linearGradient
+                  id="g-person-removed-from-me"
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop
+                    offset="0%"
+                    stopColor={REMOVED_FROM_ME_COLOR}
+                    stopOpacity={0.24}
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={REMOVED_FROM_ME_COLOR}
+                    stopOpacity={0}
+                  />
+                </linearGradient>
               </defs>
               <CartesianGrid stroke={GRID_COLOR} vertical={false} />
               <XAxis
@@ -688,6 +767,19 @@ function PersonLocChart({
                 width={48}
               />
               <Tooltip content={<PersonTooltip />} />
+              <Area
+                yAxisId="loc"
+                type="monotone"
+                dataKey="removedFromMe"
+                name="Removed from me"
+                stroke={REMOVED_FROM_ME_COLOR}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+                fill="url(#g-person-removed-from-me)"
+                isAnimationActive
+                animationDuration={600}
+              />
               <Area
                 yAxisId="loc"
                 type="monotone"
@@ -735,7 +827,8 @@ function PersonTooltip({
   const pt = payload[0]?.payload;
   const added = pt?.additions ?? payload[0]?.value ?? 0;
   const removed = pt?.deletions ?? 0;
-  if (added === 0 && removed === 0) return null;
+  const removedFromMe = pt?.removedFromMe ?? 0;
+  if (added === 0 && removed === 0 && removedFromMe === 0) return null;
   return (
     <div className="rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm">
       <div className="mb-1 font-medium">{formatDate(label)}</div>
@@ -759,6 +852,16 @@ function PersonTooltip({
           {formatLoc(removed)}
         </span>
       </div>
+      <div className="mt-0.5 flex items-center gap-2">
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: REMOVED_FROM_ME_COLOR }}
+        />
+        <span>removed from me</span>
+        <span className="ml-auto tabular-nums text-muted-foreground">
+          {formatLoc(removedFromMe)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -766,19 +869,23 @@ function PersonTooltip({
 function locAxisMax(points: WeekPoint[]): number {
   const maxValue = points.reduce(
     (max, point) =>
-      Math.max(max, point.additions ?? 0, point.deletions ?? 0),
+      Math.max(
+        max,
+        point.additions ?? 0,
+        point.deletions ?? 0,
+        point.removedFromMe ?? 0,
+      ),
     0,
   );
-  return Math.max(LOC_AXIS_STEP, Math.ceil(maxValue / LOC_AXIS_STEP) * LOC_AXIS_STEP);
+  return Math.max(
+    LOC_AXIS_MIN_MAX,
+    Math.ceil(maxValue / LOC_AXIS_STEP) * LOC_AXIS_STEP,
+  );
 }
 
 function locAxisTicks(axisMax: number): number[] {
-  const maxIntervals = 8;
-  const intervalCount = Math.max(1, Math.ceil(axisMax / LOC_AXIS_STEP));
-  const step =
-    LOC_AXIS_STEP * Math.max(1, Math.ceil(intervalCount / maxIntervals));
   const ticks: number[] = [];
-  for (let tick = 0; tick < axisMax; tick += step) {
+  for (let tick = 0; tick < axisMax; tick += LOC_AXIS_STEP) {
     ticks.push(tick);
   }
   ticks.push(axisMax);

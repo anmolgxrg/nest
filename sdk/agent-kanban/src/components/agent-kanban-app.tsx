@@ -163,6 +163,7 @@ type ApiError = {
 }
 
 const sessionStorageKey = "agent-kanban-session-id"
+const sidebarFilterStorageKey = "agent-kanban-sidebar-filter"
 const defaultGroupBy: GroupBy = "status"
 const autoRefreshMs = 30_000
 
@@ -203,6 +204,19 @@ const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set([
   "chart",
 ])
 
+function readStoredSidebarFilter(): SidebarFilter {
+  if (typeof window === "undefined") return "sdms"
+  const stored = window.localStorage.getItem(sidebarFilterStorageKey)
+  return isSidebarFilter(stored) ? stored : "sdms"
+}
+
+function isSidebarFilter(value: unknown): value is SidebarFilter {
+  return (
+    typeof value === "string" &&
+    sidebarFilters.some((filter) => filter.id === value)
+  )
+}
+
 const boardLoadingColumns: {
   id: string
   title: string
@@ -227,7 +241,9 @@ export function AgentKanbanApp() {
   const [repositories, setRepositories] = React.useState<RepositoryOption[]>([])
   const [models, setModels] = React.useState<ModelOption[]>([])
   const [groupBy, setGroupBy] = React.useState<GroupBy>(defaultGroupBy)
-  const [sidebarFilter, setSidebarFilter] = React.useState<SidebarFilter>("sdms")
+  const [sidebarFilter, setSidebarFilter] = React.useState<SidebarFilter>(
+    readStoredSidebarFilter,
+  )
   const [query, setQuery] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -246,6 +262,10 @@ export function AgentKanbanApp() {
   const [reposLoading, setReposLoading] = React.useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
   const autoRefreshInFlightRef = React.useRef(false)
+
+  React.useEffect(() => {
+    window.localStorage.setItem(sidebarFilterStorageKey, sidebarFilter)
+  }, [sidebarFilter])
 
   const loadBoard = React.useCallback(async (
     sessionId: string,
