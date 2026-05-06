@@ -189,7 +189,7 @@ const sidebarFilters: {
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
   { id: "chart", label: "Chart", icon: CirclesFourIcon },
   { id: "jetsonAgent", label: "Jetson agent", icon: TerminalWindowIcon },
-  { id: "userSdas", label: "User SDAs", icon: TerminalWindowIcon },
+  { id: "userSdas", label: "Human SDMs", icon: TerminalWindowIcon },
   { id: "orgActivity", label: "Org activity", icon: PulseIcon },
 ]
 
@@ -520,9 +520,6 @@ export function AgentKanbanApp() {
               <GearSixIcon data-icon="inline-start" />
               Settings
             </Button>
-            <div className="mt-2 truncate px-1 text-xs text-muted-foreground">
-              {signedInInitial} · {signedInName} · {signedInRole}
-            </div>
           </div>
         )}
       </aside>

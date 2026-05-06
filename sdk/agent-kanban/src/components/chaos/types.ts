@@ -1,4 +1,4 @@
-// Mirror of the chaos public API shapes consumed by the Projects + User SDAs
+// Mirror of the chaos public API shapes consumed by the Projects + Human SDMs
 // views. NEST proxies chaos through /api/chaos/* and renders these payloads.
 
 export type Range = "today" | "24h" | "7d" | "30d" | "all";

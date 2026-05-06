@@ -100,7 +100,7 @@ export function UserSdasView() {
     <div className="space-y-4 p-4">
       <header className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold leading-tight">User SDAs</h1>
+          <h1 className="text-lg font-semibold leading-tight">Human SDMs</h1>
           <p className="text-xs text-muted-foreground">
             {sessions.length === 0
               ? "Live activity across team laptops · last 24h"
