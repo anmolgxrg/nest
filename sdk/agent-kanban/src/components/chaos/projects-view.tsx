@@ -105,6 +105,8 @@ export function ByProjectPanel({
   activityErr: externalActivityErr,
   activityLoading: externalActivityLoading,
   showHeader = false,
+  showProjectBuckets = true,
+  chartFooter,
   className,
 }: {
   range: Range;
@@ -113,6 +115,8 @@ export function ByProjectPanel({
   activityErr?: string | null;
   activityLoading?: boolean;
   showHeader?: boolean;
+  showProjectBuckets?: boolean;
+  chartFooter?: React.ReactNode;
   className?: string;
 }) {
   const [activity, setActivity] = React.useState<ActivityPayload | null>(null);
@@ -204,7 +208,7 @@ export function ByProjectPanel({
         </header>
       ) : null}
 
-      <ProjectLocChart range={range} />
+      <ProjectLocChart range={range} footer={chartFooter} />
 
       {displayedActivityErr ? (
         <Card className="border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -224,29 +228,31 @@ export function ByProjectPanel({
         </div>
       ) : null}
 
-      <div className="space-y-5">
-        {buckets.map((b) => (
-          <section key={b.project}>
-            <div className="mb-2 flex items-center gap-2 px-1">
-              <span className="text-sm font-medium">{b.project}</span>
-              <span className="text-xs text-muted-foreground">
-                {b.features.length} feature
-                {b.features.length === 1 ? "" : "s"}
-              </span>
-              {b.source !== "mixed" ? (
-                <Badge variant="secondary" className="text-[10px]">
-                  {b.source === "jira" ? "Jira" : "GitHub"}
-                </Badge>
-              ) : null}
-            </div>
-            <Card className="divide-y divide-border px-4 py-0">
-              {b.features.map((f) => (
-                <FeatureRow key={f.detailId} rollup={f} />
-              ))}
-            </Card>
-          </section>
-        ))}
-      </div>
+      {showProjectBuckets ? (
+        <div className="space-y-5">
+          {buckets.map((b) => (
+            <section key={b.project}>
+              <div className="mb-2 flex items-center gap-2 px-1">
+                <span className="text-sm font-medium">{b.project}</span>
+                <span className="text-xs text-muted-foreground">
+                  {b.features.length} feature
+                  {b.features.length === 1 ? "" : "s"}
+                </span>
+                {b.source !== "mixed" ? (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {b.source === "jira" ? "Jira" : "GitHub"}
+                  </Badge>
+                ) : null}
+              </div>
+              <Card className="divide-y divide-border px-4 py-0">
+                {b.features.map((f) => (
+                  <FeatureRow key={f.detailId} rollup={f} />
+                ))}
+              </Card>
+            </section>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -344,7 +350,13 @@ function rollupSummary(r: Rollup): string {
   return parts.join(" · ");
 }
 
-function ProjectLocChart({ range }: { range: Range }) {
+function ProjectLocChart({
+  range,
+  footer,
+}: {
+  range: Range;
+  footer?: React.ReactNode;
+}) {
   const [data, setData] = React.useState<ProjectLocPayload | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
 
@@ -530,20 +542,24 @@ function ProjectLocChart({ range }: { range: Range }) {
 
       <Separator className="my-3" />
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 pl-2 text-xs">
-        {latestByProj.map((p, i) => (
-          <div key={p.name} className="flex items-center gap-1.5">
-            <span
-              className="size-2 rounded-full"
-              style={{ backgroundColor: LOC_COLORS[i % LOC_COLORS.length] }}
-            />
-            <span>{p.name}</span>
-            <span className="tabular-nums text-muted-foreground">
-              {formatLoc(p.loc)}
-            </span>
-          </div>
-        ))}
-      </div>
+      {footer !== undefined ? (
+        footer
+      ) : (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 pl-2 text-xs">
+          {latestByProj.map((p, i) => (
+            <div key={p.name} className="flex items-center gap-1.5">
+              <span
+                className="size-2 rounded-full"
+                style={{ backgroundColor: LOC_COLORS[i % LOC_COLORS.length] }}
+              />
+              <span>{p.name}</span>
+              <span className="tabular-nums text-muted-foreground">
+                {formatLoc(p.loc)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

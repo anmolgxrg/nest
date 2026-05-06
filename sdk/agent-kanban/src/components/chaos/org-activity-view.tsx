@@ -3,9 +3,10 @@
 import * as React from "react";
 import {
   ArrowSquareOutIcon,
-  CalendarBlankIcon,
+  CaretDownIcon,
   FolderIcon,
   GithubLogoIcon,
+  PlusIcon,
   UsersThreeIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -22,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ByProjectPanel } from "./projects-view";
 import type { ActivityPayload, Person, Range, Rollup } from "./types";
@@ -53,7 +55,7 @@ const WEEKS_FOR_RANGE: Record<Range, number | "all"> = {
   all: "all",
 };
 
-type Tab = "byproject" | "byday" | "byperson";
+type Tab = "byproject" | "byperson";
 const orgActivityRangeStorageKey = "agent-kanban-org-activity-range";
 const orgActivityTabStorageKey = "agent-kanban-org-activity-tab";
 const orgActivityPersonStorageKey = "agent-kanban-org-activity-person";
@@ -83,7 +85,7 @@ function isRange(value: unknown): value is Range {
 }
 
 function isTab(value: unknown): value is Tab {
-  return value === "byproject" || value === "byday" || value === "byperson";
+  return value === "byproject" || value === "byperson";
 }
 
 export function OrgActivityView() {
@@ -131,14 +133,17 @@ export function OrgActivityView() {
 
   return (
     <div className="space-y-4 p-4">
-      <header className="flex items-center justify-between gap-4">
+      <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold leading-tight">Org activity</h1>
           <p className="text-xs text-muted-foreground">
             What shipped — by project, by day, by person. Sourced from chaos.
           </p>
         </div>
-        <RangeTabs value={range} onChange={setRange} />
+        <div className="flex shrink-0 items-center gap-2">
+          <TrackedReposMenu />
+          <RangeTabs value={range} onChange={setRange} />
+        </div>
       </header>
 
       <div className="flex items-center gap-1">
@@ -147,12 +152,6 @@ export function OrgActivityView() {
           onClick={() => setTab("byproject")}
           icon={FolderIcon}
           label="By project"
-        />
-        <TabButton
-          active={tab === "byday"}
-          onClick={() => setTab("byday")}
-          icon={CalendarBlankIcon}
-          label="By day"
         />
         <TabButton
           active={tab === "byperson"}
@@ -180,10 +179,17 @@ export function OrgActivityView() {
           activity={data}
           activityErr={err}
           activityLoading={loading}
+          showProjectBuckets={false}
+          chartFooter={
+            data ? (
+              <ByDay
+                data={data}
+                onSelectFeature={setFeatureId}
+                embedded
+              />
+            ) : null
+          }
         />
-      ) : null}
-      {data && tab === "byday" ? (
-        <ByDay data={data} onSelectFeature={setFeatureId} />
       ) : null}
       {data && tab === "byperson" ? (
         <ByPerson data={data} onSelectFeature={setFeatureId} />
@@ -252,6 +258,186 @@ function TabButton({
   );
 }
 
+interface TrackedRepo {
+  owner: string;
+  name: string;
+  url: string;
+  jiraProjectKey: string | null;
+}
+
+function TrackedReposMenu() {
+  const [open, setOpen] = React.useState(false);
+  const [repos, setRepos] = React.useState<TrackedRepo[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [url, setUrl] = React.useState("");
+  const [jiraKey, setJiraKey] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  const loadRepos = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const resp = await fetch("/api/chaos/repos", { cache: "no-store" });
+      const json = (await resp.json()) as {
+        repos?: TrackedRepo[];
+        error?: string;
+      };
+      if (!resp.ok) throw new Error(json.error ?? `HTTP ${resp.status}`);
+      setRepos(json.repos ?? []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const id = window.setTimeout(() => {
+      void loadRepos();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [loadRepos]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  const addRepo = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const nextUrl = url.trim();
+    if (!nextUrl || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const resp = await fetch("/api/chaos/repos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: nextUrl,
+          jiraProjectKey: jiraKey.trim() || null,
+        }),
+      });
+      const json = (await resp.json().catch(() => null)) as
+        | { repos?: TrackedRepo[]; error?: string }
+        | null;
+      if (!resp.ok) throw new Error(json?.error ?? `HTTP ${resp.status}`);
+      setRepos(json?.repos ?? []);
+      setUrl("");
+      setJiraKey("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div ref={menuRef} className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 gap-1.5 text-xs"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <GithubLogoIcon aria-hidden="true" className="size-3.5" />
+        Repos
+        <span className="tabular-nums text-muted-foreground">
+          {repos.length}
+        </span>
+        <CaretDownIcon aria-hidden="true" className="size-3.5" />
+      </Button>
+
+      {open ? (
+        <div className="absolute right-0 top-9 z-30 w-80 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-sm font-medium">Tracked repos</div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => void loadRepos()}
+              disabled={loading}
+            >
+              {loading ? "loading" : "refresh"}
+            </Button>
+          </div>
+
+          {error ? (
+            <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="max-h-56 overflow-y-auto pr-1">
+            {repos.length === 0 && !loading ? (
+              <div className="py-3 text-center text-xs text-muted-foreground">
+                No repos tracked.
+              </div>
+            ) : null}
+            {repos.map((repo) => (
+              <a
+                key={`${repo.owner}/${repo.name}`}
+                href={repo.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/60"
+              >
+                <span className="min-w-0 truncate">
+                  {repo.owner}/{repo.name}
+                </span>
+                {repo.jiraProjectKey ? (
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {repo.jiraProjectKey}
+                  </span>
+                ) : null}
+              </a>
+            ))}
+          </div>
+
+          <form onSubmit={addRepo} className="mt-3 border-t pt-3">
+            <div className="mb-2 grid grid-cols-[1fr_4.5rem] gap-2">
+              <Input
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://github.com/org/repo"
+                className="h-8 font-mono text-xs"
+              />
+              <Input
+                value={jiraKey}
+                onChange={(event) =>
+                  setJiraKey(event.target.value.toUpperCase())
+                }
+                placeholder="Jira"
+                className="h-8 font-mono text-xs uppercase"
+                maxLength={16}
+              />
+            </div>
+            <Button
+              type="submit"
+              size="sm"
+              className="h-8 w-full gap-1.5 text-xs"
+              disabled={submitting || url.trim().length === 0}
+            >
+              <PlusIcon aria-hidden="true" className="size-3.5" />
+              {submitting ? "Adding..." : "Add tracked repo"}
+            </Button>
+          </form>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ───────────────────────── By day ─────────────────────────
 
 interface DayBucket {
@@ -262,9 +448,11 @@ interface DayBucket {
 function ByDay({
   data,
   onSelectFeature,
+  embedded = false,
 }: {
   data: ActivityPayload;
   onSelectFeature: (id: string) => void;
+  embedded?: boolean;
 }) {
   const grouped = React.useMemo(() => {
     const peopleById = new Map(data.people.map((p) => [p.id, p]));
@@ -288,20 +476,34 @@ function ByDay({
 
   if (grouped.length === 0) {
     return (
-      <div className="py-8 text-center text-sm text-muted-foreground">
+      <div className="py-4 text-center text-sm text-muted-foreground">
         No activity in this window.
       </div>
     );
   }
 
   return (
-    <div className="space-y-5">
+    <div className={embedded ? "space-y-3" : "space-y-5"}>
+      {embedded ? (
+        <div>
+          <div className="text-sm font-medium">Activity by day</div>
+          <div className="text-xs text-muted-foreground">
+            Recent work grouped by day and person.
+          </div>
+        </div>
+      ) : null}
       {grouped.map(([day, perPerson]) => (
         <section key={day}>
           <div className="mb-2 px-1 text-xs uppercase tracking-wider text-muted-foreground">
             {formatPacificDayHeader(day)}
           </div>
-          <Card className="divide-y divide-border py-0">
+          <div
+            className={
+              embedded
+                ? "divide-y divide-border rounded-lg border bg-background/30"
+                : "divide-y divide-border rounded-lg border bg-card"
+            }
+          >
             {[...perPerson.entries()].map(([personId, bucket]) => (
               <PersonDayBucket
                 key={`${day}:${personId}`}
@@ -309,7 +511,7 @@ function ByDay({
                 onSelectFeature={onSelectFeature}
               />
             ))}
-          </Card>
+          </div>
         </section>
       ))}
     </div>
@@ -386,6 +588,13 @@ function ByPerson({
     return m;
   }, [data]);
 
+  const leaderboard = React.useMemo(
+    () => buildLeaderboard(data.people),
+    [data.people],
+  );
+  const team = leaderboard.filter((row) => !row.person.external);
+  const others = leaderboard.filter((row) => row.person.external);
+
   if (selected) {
     const p = data.people.find((x) => x.id === selected);
     if (!p) {
@@ -451,58 +660,159 @@ function ByPerson({
     );
   }
 
-  const team = data.people.filter((p) => !p.external);
-  const others = data.people.filter((p) => p.external);
-
-  const renderCard = (p: Person) => {
-    const rs = rollupsByPerson.get(p.id) ?? [];
-    const keyedFeatures = rs.filter((r) => r.featureKey).length;
-    const count = keyedFeatures + p.significantAnonCommits;
-    const tip =
-      `${keyedFeatures} feature${keyedFeatures === 1 ? "" : "s"} · ` +
-      `${p.significantAnonCommits} significant standalone commit${p.significantAnonCommits === 1 ? "" : "s"} ` +
-      `(>150 LOC) · ${p.ticketsClosed} ticket${p.ticketsClosed === 1 ? "" : "s"} closed`;
-    return (
-      <button
-        key={p.id}
-        type="button"
-        onClick={() => {
-          setSelected(p.id);
-          setPage(1);
-        }}
-        className="rounded-lg border bg-card p-4 text-left transition-colors hover:bg-muted/60"
-      >
-        <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-full bg-muted text-xs font-medium">
-            {initials(p.displayName)}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm">{p.displayName}</div>
-          </div>
-          <div className="tabular-nums text-xs text-muted-foreground" title={tip}>
-            {count}
-          </div>
-        </div>
-      </button>
-    );
-  };
+  const renderRow = (row: LeaderboardRow) => (
+    <LeaderboardPersonRow
+      key={row.person.id}
+      row={row}
+      onClick={() => {
+        setSelected(row.person.id);
+        setPage(1);
+      }}
+    />
+  );
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {team.map(renderCard)}
-      </div>
+      <Card className="overflow-x-auto py-0">
+        <div className="grid min-w-[46rem] grid-cols-[3rem_minmax(0,1fr)_5rem_5rem_5rem_5rem_4rem] gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
+          <div>Rank</div>
+          <div>Person</div>
+          <div className="text-right">Commits</div>
+          <div className="text-right">Added</div>
+          <div className="text-right">Removed</div>
+          <div className="text-right">Tickets</div>
+          <div className="text-right">Score</div>
+        </div>
+        <div className="min-w-[46rem] divide-y divide-border">
+          {team.map(renderRow)}
+        </div>
+      </Card>
       {others.length > 0 ? (
         <div className="space-y-3">
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             Other contributors
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {others.map(renderCard)}
-          </div>
+          <Card className="min-w-[46rem] divide-y divide-border overflow-x-auto py-0">
+            {others.map(renderRow)}
+          </Card>
         </div>
       ) : null}
     </div>
+  );
+}
+
+interface LeaderboardRow {
+  person: Person;
+  rank: number;
+  commits: number;
+  linesAdded: number;
+  linesRemoved: number;
+  ticketsClosed: number;
+  score: number;
+}
+
+function buildLeaderboard(people: Person[]): LeaderboardRow[] {
+  const maxCommits = Math.max(0, ...people.map((p) => p.commitCount ?? 0));
+  const maxAdded = Math.max(0, ...people.map((p) => p.linesAdded ?? 0));
+  const maxRemoved = Math.max(0, ...people.map((p) => p.linesRemoved ?? 0));
+  const maxTickets = Math.max(0, ...people.map((p) => p.ticketsClosed ?? 0));
+
+  return people
+    .map((person) => {
+      const commits = person.commitCount ?? 0;
+      const linesAdded = person.linesAdded ?? 0;
+      const linesRemoved = person.linesRemoved ?? 0;
+      const ticketsClosed = person.ticketsClosed ?? 0;
+      const score =
+        100 *
+        (0.3 * normalized(commits, maxCommits) +
+          0.3 * normalized(linesAdded, maxAdded) +
+          0.15 * normalized(linesRemoved, maxRemoved) +
+          0.25 * normalized(ticketsClosed, maxTickets));
+      return {
+        person,
+        rank: 0,
+        commits,
+        linesAdded,
+        linesRemoved,
+        ticketsClosed,
+        score: Math.round(score),
+      };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.commits !== a.commits) return b.commits - a.commits;
+      return b.linesAdded - a.linesAdded;
+    })
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
+function normalized(value: number, max: number): number {
+  if (max <= 0) return 0;
+  return Math.log1p(value) / Math.log1p(max);
+}
+
+function LeaderboardPersonRow({
+  row,
+  onClick,
+}: {
+  row: LeaderboardRow;
+  onClick: () => void;
+}) {
+  const isTop = row.rank === 1 && !row.person.external;
+  const formula =
+    "Score = 30% commits + 30% lines added + 15% lines removed + 25% Jira tickets closed, log-normalized within this range.";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={formula}
+      className={
+        "grid min-w-[46rem] w-full grid-cols-[3rem_minmax(0,1fr)_5rem_5rem_5rem_5rem_4rem] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 " +
+        (isTop ? "bg-[#d6a84f]/10" : "")
+      }
+    >
+      <div>
+        <span
+          className={
+            "inline-flex size-7 items-center justify-center rounded-full text-xs font-medium tabular-nums " +
+            (isTop
+              ? "bg-[#d6a84f] text-black"
+              : "bg-muted text-muted-foreground")
+          }
+        >
+          {row.rank}
+        </span>
+      </div>
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
+          {initials(row.person.displayName)}
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">
+            {row.person.displayName}
+          </div>
+          {row.person.githubLogin ? (
+            <div className="truncate text-xs text-muted-foreground">
+              @{row.person.githubLogin}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="text-right text-xs tabular-nums">{row.commits}</div>
+      <div className="text-right text-xs tabular-nums">
+        {formatLoc(row.linesAdded)}
+      </div>
+      <div className="text-right text-xs tabular-nums">
+        {formatLoc(row.linesRemoved)}
+      </div>
+      <div className="text-right text-xs tabular-nums">
+        {row.ticketsClosed}
+      </div>
+      <div className="text-right text-sm font-medium tabular-nums">
+        {row.score}
+      </div>
+    </button>
   );
 }
 

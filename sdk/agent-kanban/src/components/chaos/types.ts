@@ -9,6 +9,9 @@ export interface Person {
   role: string | null;
   githubLogin: string | null;
   external: boolean;
+  commitCount: number;
+  linesAdded: number;
+  linesRemoved: number;
   significantCommits: number;
   significantAnonCommits: number;
   ticketsClosed: number;
