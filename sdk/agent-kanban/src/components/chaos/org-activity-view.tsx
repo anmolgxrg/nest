@@ -540,6 +540,8 @@ interface PersonLocPayload {
 
 const ADDED_COLOR = "#3b82f6";
 const REMOVED_COLOR = "#ef4444";
+const AXIS_TEXT_COLOR = "rgba(245,245,245,0.62)";
+const GRID_COLOR = "rgba(245,245,245,0.08)";
 const LOC_AXIS_STEP = 5_000;
 
 function PersonLocChart({
@@ -589,6 +591,9 @@ function PersonLocChart({
     [visiblePoints],
   );
   const axisTicks = React.useMemo(() => locAxisTicks(axisMax), [axisMax]);
+  const hasVisibleOwnedLinesDropped = visiblePoints.some(
+    (point) => point.removedFromMe > 0,
+  );
 
   if (err) {
     return (
@@ -664,12 +669,12 @@ function PersonLocChart({
                   <stop offset="100%" stopColor={REMOVED_COLOR} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="rgba(20,20,19,0.06)" vertical={false} />
+              <CartesianGrid stroke={GRID_COLOR} vertical={false} />
               <XAxis
                 dataKey="date"
                 tickFormatter={formatDate}
-                stroke="rgba(20,20,19,0.4)"
-                tick={{ fontSize: 10 }}
+                stroke={AXIS_TEXT_COLOR}
+                tick={{ fill: AXIS_TEXT_COLOR, fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -679,26 +684,28 @@ function PersonLocChart({
                 domain={[0, axisMax]}
                 ticks={axisTicks}
                 tickFormatter={formatLoc}
-                stroke="rgba(20,20,19,0.4)"
-                tick={{ fontSize: 10 }}
+                stroke={AXIS_TEXT_COLOR}
+                tick={{ fill: AXIS_TEXT_COLOR, fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
-                width={40}
+                width={48}
               />
               <Tooltip content={<PersonTooltip />} />
-              <Area
-                yAxisId="loc"
-                type="monotone"
-                dataKey="removedFromMe"
-                name="Owned lines dropped"
-                stroke={REMOVED_COLOR}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-                fill="url(#g-person-owned-dropped)"
-                isAnimationActive
-                animationDuration={600}
-              />
+              {hasVisibleOwnedLinesDropped ? (
+                <Area
+                  yAxisId="loc"
+                  type="monotone"
+                  dataKey="removedFromMe"
+                  name="Owned lines dropped"
+                  stroke={REMOVED_COLOR}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                  fill="url(#g-person-owned-dropped)"
+                  isAnimationActive
+                  animationDuration={600}
+                />
+              ) : null}
               <Area
                 yAxisId="loc"
                 type="monotone"
@@ -747,16 +754,18 @@ function PersonTooltip({
           {formatLoc(added)}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-2">
-        <span
-          className="size-1.5 rounded-full"
-          style={{ background: REMOVED_COLOR }}
-        />
-        <span>owned lines dropped</span>
-        <span className="ml-auto tabular-nums text-muted-foreground">
-          {formatLoc(removedFromMe)}
-        </span>
-      </div>
+      {removedFromMe > 0 ? (
+        <div className="mt-0.5 flex items-center gap-2">
+          <span
+            className="size-1.5 rounded-full"
+            style={{ background: REMOVED_COLOR }}
+          />
+          <span>owned lines dropped</span>
+          <span className="ml-auto tabular-nums text-muted-foreground">
+            {formatLoc(removedFromMe)}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
