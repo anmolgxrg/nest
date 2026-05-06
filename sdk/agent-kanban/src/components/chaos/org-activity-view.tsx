@@ -10,9 +10,9 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -538,8 +538,8 @@ interface PersonLocPayload {
   points: WeekPoint[];
 }
 
-const ACCENT = "#c15f3c";
-const REMOVED_COLOR = "#9e4a5a";
+const ADDED_COLOR = "#3b82f6";
+const REMOVED_COLOR = "#ef4444";
 
 function PersonLocChart({
   personId,
@@ -601,14 +601,13 @@ function PersonLocChart({
 
   const hasData =
     data.totalAdditions > 0 ||
-    data.totalDeletions > 0 ||
     data.totalRemovedFromMe > 0;
 
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <div>
-          <div className="text-sm font-medium">Lines added per week</div>
+          <div className="text-sm font-medium">Lines added vs removed</div>
           <div className="text-xs text-muted-foreground">
             Last {visiblePoints.length} week
             {visiblePoints.length === 1 ? "" : "s"}
@@ -616,12 +615,14 @@ function PersonLocChart({
         </div>
         <div className="flex gap-4 text-xs tabular-nums">
           <div>
-            <span className="text-muted-foreground">added </span>
-            <span className="font-medium">{formatLoc(data.totalAdditions)}</span>
+            <span className="text-muted-foreground">lines added </span>
+            <span className="font-medium text-[#3b82f6]">
+              {formatLoc(data.totalAdditions)}
+            </span>
           </div>
           <div>
-            <span className="text-muted-foreground">cut </span>
-            <span className="font-medium">
+            <span className="text-muted-foreground">lines removed </span>
+            <span className="font-medium text-[#ef4444]">
               {formatLoc(data.totalRemovedFromMe)}
             </span>
           </div>
@@ -635,20 +636,10 @@ function PersonLocChart({
       ) : (
         <div className="-ml-2 h-48">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
+            <LineChart
               data={visiblePoints}
               margin={{ top: 6, right: 6, left: 0, bottom: 0 }}
             >
-              <defs>
-                <linearGradient id="g-person-loc" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={ACCENT} stopOpacity={0.4} />
-                  <stop offset="100%" stopColor={ACCENT} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="g-person-removed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={REMOVED_COLOR} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={REMOVED_COLOR} stopOpacity={0} />
-                </linearGradient>
-              </defs>
               <CartesianGrid stroke="rgba(20,20,19,0.06)" vertical={false} />
               <XAxis
                 dataKey="date"
@@ -667,25 +658,29 @@ function PersonLocChart({
                 width={40}
               />
               <Tooltip content={<PersonTooltip />} />
-              <Area
+              <Line
                 type="monotone"
                 dataKey="additions"
-                stroke={ACCENT}
-                strokeWidth={1.5}
-                fill="url(#g-person-loc)"
+                name="Lines added"
+                stroke={ADDED_COLOR}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
                 isAnimationActive
                 animationDuration={600}
               />
-              <Area
+              <Line
                 type="monotone"
                 dataKey="removedFromMe"
+                name="Lines removed"
                 stroke={REMOVED_COLOR}
-                strokeWidth={1.5}
-                fill="url(#g-person-removed)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
                 isAnimationActive
                 animationDuration={600}
               />
-            </AreaChart>
+            </LineChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -705,39 +700,31 @@ function PersonTooltip({
   if (!active || !payload || payload.length === 0 || !label) return null;
   const pt = payload[0]?.payload;
   const added = pt?.additions ?? payload[0]?.value ?? 0;
-  const removed = pt?.deletions ?? 0;
-  if (added === 0 && removed === 0 && (pt?.removedFromMe ?? 0) === 0) return null;
+  const removedFromMe = pt?.removedFromMe ?? 0;
+  if (added === 0 && removedFromMe === 0) return null;
   return (
     <div className="rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm">
       <div className="mb-1 font-medium">{formatDate(label)}</div>
       <div className="flex items-center gap-2">
-        <span className="size-1.5 rounded-full" style={{ background: ACCENT }} />
-        <span>added</span>
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: ADDED_COLOR }}
+        />
+        <span>lines added</span>
         <span className="ml-auto tabular-nums text-muted-foreground">
           {formatLoc(added)}
         </span>
       </div>
-      {(pt?.removedFromMe ?? 0) > 0 ? (
-        <div className="mt-0.5 flex items-center gap-2">
-          <span
-            className="size-1.5 rounded-full"
-            style={{ background: REMOVED_COLOR }}
-          />
-          <span>cut</span>
-          <span className="ml-auto tabular-nums text-muted-foreground">
-            {formatLoc(pt!.removedFromMe)}
-          </span>
-        </div>
-      ) : null}
-      {removed > 0 ? (
-        <div className="mt-0.5 flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-          <span>removed</span>
-          <span className="ml-auto tabular-nums text-muted-foreground">
-            {formatLoc(removed)}
-          </span>
-        </div>
-      ) : null}
+      <div className="mt-0.5 flex items-center gap-2">
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: REMOVED_COLOR }}
+        />
+        <span>lines removed</span>
+        <span className="ml-auto tabular-nums text-muted-foreground">
+          {formatLoc(removedFromMe)}
+        </span>
+      </div>
     </div>
   );
 }
