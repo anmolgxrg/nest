@@ -254,25 +254,33 @@ export function AgentKanbanApp() {
 
   const loadBoard = React.useCallback(async (
     sessionId: string,
-    options: { showLoading?: boolean } = {},
+    options: { includeStaticData?: boolean; showLoading?: boolean } = {},
   ) => {
+    const includeStaticData = options.includeStaticData ?? false
     const showLoading = options.showLoading ?? true
     if (showLoading) {
       setIsLoading(true)
     }
     setError(null)
     try {
-      const [agentResult, repositoryResult, modelResult] = await Promise.all([
+      const [agentResult, staticData] = await Promise.all([
         apiFetch<AgentListResponse>("/api/agents", sessionId),
-        apiFetch<{ repositories: RepositoryOption[] }>(
-          "/api/repositories",
-          sessionId
-        ),
-        apiFetch<{ models: ModelOption[] }>("/api/models", sessionId),
+        includeStaticData
+          ? Promise.all([
+              apiFetch<{ repositories: RepositoryOption[] }>(
+                "/api/repositories",
+                sessionId
+              ),
+              apiFetch<{ models: ModelOption[] }>("/api/models", sessionId),
+            ])
+          : Promise.resolve(null),
       ])
       setAgents(agentResult.agents)
-      setRepositories(repositoryResult.repositories)
-      setModels(modelResult.models)
+      if (staticData) {
+        const [repositoryResult, modelResult] = staticData
+        setRepositories(repositoryResult.repositories)
+        setModels(modelResult.models)
+      }
     } catch (loadError) {
       setError(errorMessage(loadError, "Failed to load cloud agents."))
     } finally {
@@ -299,7 +307,7 @@ export function AgentKanbanApp() {
         window.localStorage.setItem(sessionStorageKey, restored.id)
         setSession(restored)
         setStatus("ready")
-        await loadBoard(restored.id)
+        await loadBoard(restored.id, { includeStaticData: true })
       } catch {
         if (!cancelled) {
           window.localStorage.removeItem(sessionStorageKey)
@@ -371,7 +379,7 @@ export function AgentKanbanApp() {
     window.localStorage.setItem(sessionStorageKey, nextSession.id)
     setSession(nextSession)
     setStatus("ready")
-    await loadBoard(nextSession.id)
+    await loadBoard(nextSession.id, { includeStaticData: true })
   }
 
   async function handleForgetKey() {

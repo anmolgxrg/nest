@@ -22,6 +22,8 @@ import { auditEvent, recordSdaLaunch } from "@/lib/nest-store"
 
 type Settings = {
   cursorApiKey?: string
+  cursorRole?: AppRole
+  cursorUser?: PublicUser | null
 }
 
 export type Session = {
@@ -61,6 +63,16 @@ type RepositoryCacheEntry = {
   rawById: Map<string, unknown>
 }
 
+type ModelCacheEntry = {
+  loadedAt: number
+  models: ModelOption[]
+}
+
+type AgentListCacheEntry = {
+  loadedAt: number
+  response: AgentListResponse
+}
+
 type RunSummary = {
   id?: string
   status?: string
@@ -74,21 +86,34 @@ type RunSummary = {
 
 const settingsDir = path.join(os.homedir(), ".agent-kanban")
 const settingsPath = path.join(settingsDir, "settings.json")
-const repositoryCacheTtlMs = 55_000
+const agentListCacheTtlMs = 3 * 60_000
+const repositoryCacheTtlMs = 30 * 60_000
+const modelCacheTtlMs = 30 * 60_000
 
 const globalForAgentKanban = globalThis as typeof globalThis & {
   __agentKanbanSessions?: Map<string, Session>
+  __agentKanbanAgentListCache?: Map<string, AgentListCacheEntry>
   __agentKanbanRepositoryCache?: Map<string, RepositoryCacheEntry>
+  __agentKanbanModelCache?: Map<string, ModelCacheEntry>
 }
 
 const sessions =
   globalForAgentKanban.__agentKanbanSessions ?? new Map<string, Session>()
 globalForAgentKanban.__agentKanbanSessions = sessions
 
+const agentListCache =
+  globalForAgentKanban.__agentKanbanAgentListCache ??
+  new Map<string, AgentListCacheEntry>()
+globalForAgentKanban.__agentKanbanAgentListCache = agentListCache
+
 const repositoryCache =
   globalForAgentKanban.__agentKanbanRepositoryCache ??
   new Map<string, RepositoryCacheEntry>()
 globalForAgentKanban.__agentKanbanRepositoryCache = repositoryCache
+
+const modelCache =
+  globalForAgentKanban.__agentKanbanModelCache ?? new Map<string, ModelCacheEntry>()
+globalForAgentKanban.__agentKanbanModelCache = modelCache
 
 const agentSdk = Agent as unknown as AgentNamespace
 const cursorSdk = Cursor as CursorNamespace
@@ -151,13 +176,17 @@ export async function createSession(
   const trimmedKey = apiKey.trim()
   await validateCursorApiKey(trimmedKey)
 
-  if (remember) {
-    await writeSettings({ cursorApiKey: trimmedKey })
-  }
-
   const user = await getCurrentUser(trimmedKey)
   const role = resolveRole(user)
   assertRole(role, "viewer")
+
+  if (remember) {
+    await writeSettings({
+      cursorApiKey: trimmedKey,
+      cursorRole: role,
+      cursorUser: user,
+    })
+  }
 
   const session: Session = {
     id: randomUUID(),
@@ -188,15 +217,25 @@ export async function restoreSession(sessionId?: string): Promise<PublicSession>
     }
   }
 
-  const persistedApiKey = (await readSettings()).cursorApiKey?.trim()
+  const settings = await readSettings()
+  const persistedApiKey = settings.cursorApiKey?.trim()
   if (!persistedApiKey) {
     throw new MissingCursorApiKeyError()
   }
 
-  await validateCursorApiKey(persistedApiKey)
-
-  const user = await getCurrentUser(persistedApiKey)
-  const role = resolveRole(user)
+  let user: PublicUser | null
+  let role: AppRole
+  try {
+    await validateCursorApiKey(persistedApiKey)
+    user = await getCurrentUser(persistedApiKey)
+    role = resolveRole(user)
+  } catch (error) {
+    if (!isCursorRateLimitError(error)) {
+      throw error
+    }
+    user = settings.cursorUser ?? null
+    role = isAppRole(settings.cursorRole) ? settings.cursorRole : resolveRole(user)
+  }
   assertRole(role, "viewer")
 
   const session: Session = {
@@ -271,6 +310,36 @@ function assertRole(actual: AppRole, minimum: AppRole) {
   }
 }
 
+function agentListCacheKey(
+  apiKey: string,
+  options: {
+    cursor?: string
+    includeArchived?: boolean
+    limit?: number
+    prUrl?: string
+  },
+  includeDetails: boolean
+) {
+  return JSON.stringify({
+    apiKey,
+    cursor: options.cursor ?? null,
+    includeArchived: options.includeArchived ?? false,
+    includeDetails,
+    limit: options.limit ?? 50,
+    prUrl: options.prUrl ?? null,
+  })
+}
+
+function isCursorRateLimitError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : ""
+  return /rate limit|requests per hour|too many requests/i.test(message)
+}
+
 function permissionsForRole(role: AppRole): AppPermissions {
   return {
     createAgents: roleRank[role] >= roleRank.operator,
@@ -325,6 +394,10 @@ function envRole(name: string, fallback: AppRole): AppRole {
     : fallback
 }
 
+function isAppRole(value: unknown): value is AppRole {
+  return value === "admin" || value === "operator" || value === "viewer"
+}
+
 function getCookie(request: Request, name: string) {
   const cookies = request.headers.get("cookie") ?? ""
   const prefix = `${name}=`
@@ -340,6 +413,7 @@ export async function listCloudAgents(
   apiKey: string,
   options: {
     cursor?: string
+    includeDetails?: boolean
     includeArchived?: boolean
     limit?: number
     prUrl?: string
@@ -349,36 +423,60 @@ export async function listCloudAgents(
     throw new Error("This version of @cursor/sdk does not support Agent.list.")
   }
 
-  const response = await agentSdk.list({
-    apiKey,
-    runtime: "cloud",
-    limit: options.limit ?? 50,
-    cursor: options.cursor,
-    prUrl: options.prUrl,
-    includeArchived: options.includeArchived ?? false,
-  })
-  const rawAgents = extractArray(response, ["agents", "items", "data", "results"])
+  const includeDetails = options.includeDetails ?? false
+  const cacheKey = agentListCacheKey(apiKey, options, includeDetails)
+  const cached = agentListCache.get(cacheKey)
+  if (cached && Date.now() - cached.loadedAt < agentListCacheTtlMs) {
+    return cached.response
+  }
 
-  const agents = await Promise.all(
-    rawAgents.map(async (rawAgent) => {
-      const card = normalizeAgent(rawAgent)
-      const [runs, artifacts] = await Promise.all([
-        listRunsForAgent(apiKey, card.id).catch(() => []),
-        listArtifactsForAgent(apiKey, card.id).catch(() => []),
-      ])
-      enrichAgentCardFromRuns(card, runs)
-      card.artifacts = artifacts
-      return card
+  try {
+    const response = await agentSdk.list({
+      apiKey,
+      runtime: "cloud",
+      limit: options.limit ?? 50,
+      cursor: options.cursor,
+      prUrl: options.prUrl,
+      includeArchived: options.includeArchived ?? false,
     })
-  )
+    const rawAgents = extractArray(response, ["agents", "items", "data", "results"])
 
-  return {
-    agents,
-    nextCursor: firstString(asRecord(response), [
-      "nextCursor",
-      "next_cursor",
-      "cursor",
-    ]),
+    let agents = rawAgents.map(normalizeAgent)
+    if (includeDetails) {
+      agents = await Promise.all(
+        agents.map(async (card) => {
+          const [runs, artifacts] = await Promise.all([
+            listRunsForAgent(apiKey, card.id).catch(() => []),
+            listArtifactsForAgent(apiKey, card.id).catch(() => []),
+          ])
+          enrichAgentCardFromRuns(card, runs)
+          card.artifacts = artifacts
+          return card
+        })
+      )
+    }
+
+    const normalizedResponse = {
+      agents,
+      nextCursor: firstString(asRecord(response), [
+        "nextCursor",
+        "next_cursor",
+        "cursor",
+      ]),
+    }
+    agentListCache.set(cacheKey, {
+      loadedAt: Date.now(),
+      response: normalizedResponse,
+    })
+    return normalizedResponse
+  } catch (error) {
+    if (cached) {
+      return cached.response
+    }
+    if (isCursorRateLimitError(error)) {
+      return { agents: [] }
+    }
+    throw error
   }
 }
 
@@ -448,13 +546,23 @@ export async function createCloudAgent(
 }
 
 export async function listModels(apiKey: string): Promise<ModelOption[]> {
+  const cached = modelCache.get(apiKey)
+  if (cached && Date.now() - cached.loadedAt < modelCacheTtlMs) {
+    return cached.models
+  }
+
   try {
     const models = await Cursor.models.list({ apiKey })
-    return extractArray(models, ["models", "items", "data"]).flatMap((model) => {
+    const normalized = extractArray(models, ["models", "items", "data"]).flatMap((model) => {
       const normalized = normalizeModel(model)
       return normalized ? [normalized] : []
     })
+    modelCache.set(apiKey, { loadedAt: Date.now(), models: normalized })
+    return normalized
   } catch {
+    if (cached) {
+      return cached.models
+    }
     return []
   }
 }
@@ -471,30 +579,40 @@ export async function listRepositories(
     return []
   }
 
-  const response = await cursorSdk.repositories.list({ apiKey })
-  const rawRepositories = extractArray(response, [
-    "repositories",
-    "repos",
-    "items",
-    "data",
-  ])
-  const rawById = new Map<string, unknown>()
-  const repositories = rawRepositories
-    .map((rawRepository) => normalizeRepository(rawRepository))
-    .filter((repository): repository is RepositoryOption => Boolean(repository))
+  try {
+    const response = await cursorSdk.repositories.list({ apiKey })
+    const rawRepositories = extractArray(response, [
+      "repositories",
+      "repos",
+      "items",
+      "data",
+    ])
+    const rawById = new Map<string, unknown>()
+    const repositories = rawRepositories
+      .map((rawRepository) => normalizeRepository(rawRepository))
+      .filter((repository): repository is RepositoryOption => Boolean(repository))
 
-  for (const repository of repositories) {
-    rawById.set(repository.id, repository)
-    rawById.set(repository.url, repository)
+    for (const repository of repositories) {
+      rawById.set(repository.id, repository)
+      rawById.set(repository.url, repository)
+    }
+
+    repositoryCache.set(apiKey, {
+      loadedAt: Date.now(),
+      repositories,
+      rawById,
+    })
+
+    return repositories
+  } catch (error) {
+    if (cache) {
+      return cache.repositories
+    }
+    if (isCursorRateLimitError(error)) {
+      return []
+    }
+    throw error
   }
-
-  repositoryCache.set(apiKey, {
-    loadedAt: Date.now(),
-    repositories,
-    rawById,
-  })
-
-  return repositories
 }
 
 export async function listArtifactsForAgent(
@@ -632,7 +750,10 @@ async function validateCursorApiKey(apiKey: string) {
 
   try {
     await Cursor.me({ apiKey })
-  } catch {
+  } catch (error) {
+    if (isCursorRateLimitError(error)) {
+      throw error
+    }
     throw new InvalidCursorApiKeyError(
       "The Cursor API key could not be validated. Please check the key and try again."
     )
@@ -650,7 +771,10 @@ async function getCurrentUser(apiKey: string): Promise<PublicUser | null> {
       name,
       email: firstString(user, ["email"]),
     }
-  } catch {
+  } catch (error) {
+    if (isCursorRateLimitError(error)) {
+      throw error
+    }
     return null
   }
 }
