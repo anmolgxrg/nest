@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   ArrowSquareOutIcon,
   CalendarBlankIcon,
+  FolderIcon,
   GithubLogoIcon,
   UsersThreeIcon,
   XIcon,
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ByProjectPanel } from "./projects-view";
 import type { ActivityPayload, Person, Range, Rollup } from "./types";
 
 const RANGE_OPTIONS: { key: Range; label: string }[] = [
@@ -51,11 +53,11 @@ const WEEKS_FOR_RANGE: Record<Range, number | "all"> = {
   all: "all",
 };
 
-type Tab = "byday" | "byperson";
+type Tab = "byproject" | "byday" | "byperson";
 
 export function OrgActivityView() {
   const [range, setRange] = React.useState<Range>("7d");
-  const [tab, setTab] = React.useState<Tab>("byday");
+  const [tab, setTab] = React.useState<Tab>("byproject");
   const [data, setData] = React.useState<ActivityPayload | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -94,13 +96,19 @@ export function OrgActivityView() {
         <div className="min-w-0">
           <h1 className="text-lg font-semibold leading-tight">Org activity</h1>
           <p className="text-xs text-muted-foreground">
-            What shipped — by day, by person. Sourced from chaos.
+            What shipped — by project, by day, by person. Sourced from chaos.
           </p>
         </div>
         <RangeTabs value={range} onChange={setRange} />
       </header>
 
       <div className="flex items-center gap-1">
+        <TabButton
+          active={tab === "byproject"}
+          onClick={() => setTab("byproject")}
+          icon={FolderIcon}
+          label="By project"
+        />
         <TabButton
           active={tab === "byday"}
           onClick={() => setTab("byday")}
@@ -115,18 +123,26 @@ export function OrgActivityView() {
         />
       </div>
 
-      {err ? (
+      {err && tab !== "byproject" ? (
         <Card className="border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {err}
         </Card>
       ) : null}
 
-      {!data && loading ? (
+      {!data && loading && tab !== "byproject" ? (
         <div className="py-10 text-center text-sm text-muted-foreground">
           Loading…
         </div>
       ) : null}
 
+      {tab === "byproject" ? (
+        <ByProjectPanel
+          range={range}
+          activity={data}
+          activityErr={err}
+          activityLoading={loading}
+        />
+      ) : null}
       {data && tab === "byday" ? (
         <ByDay data={data} onSelectFeature={setFeatureId} />
       ) : null}

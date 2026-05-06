@@ -88,11 +88,43 @@ function formatDate(iso: string): string {
 
 export function ProjectsView() {
   const [range, setRange] = React.useState<Range>("7d");
+  return (
+    <ByProjectPanel
+      range={range}
+      onRangeChange={setRange}
+      showHeader
+      className="p-4"
+    />
+  );
+}
+
+export function ByProjectPanel({
+  range,
+  onRangeChange,
+  activity: externalActivity,
+  activityErr: externalActivityErr,
+  activityLoading: externalActivityLoading,
+  showHeader = false,
+  className,
+}: {
+  range: Range;
+  onRangeChange?: (r: Range) => void;
+  activity?: ActivityPayload | null;
+  activityErr?: string | null;
+  activityLoading?: boolean;
+  showHeader?: boolean;
+  className?: string;
+}) {
   const [activity, setActivity] = React.useState<ActivityPayload | null>(null);
   const [activityErr, setActivityErr] = React.useState<string | null>(null);
   const [activityLoading, setActivityLoading] = React.useState(false);
+  const hasExternalActivity =
+    externalActivity !== undefined ||
+    externalActivityErr !== undefined ||
+    externalActivityLoading !== undefined;
 
   React.useEffect(() => {
+    if (hasExternalActivity) return;
     let live = true;
     const loadingTimer = window.setTimeout(() => {
       if (live) setActivityLoading(true);
@@ -118,12 +150,22 @@ export function ProjectsView() {
       live = false;
       window.clearTimeout(loadingTimer);
     };
-  }, [range]);
+  }, [hasExternalActivity, range]);
+
+  const displayedActivity = hasExternalActivity
+    ? externalActivity ?? null
+    : activity;
+  const displayedActivityErr = hasExternalActivity
+    ? externalActivityErr ?? null
+    : activityErr;
+  const displayedActivityLoading = hasExternalActivity
+    ? externalActivityLoading ?? false
+    : activityLoading;
 
   const buckets = React.useMemo<Bucket[]>(() => {
-    if (!activity) return [];
+    if (!displayedActivity) return [];
     const m = new Map<string, Bucket>();
-    for (const r of activity.rollups) {
+    for (const r of displayedActivity.rollups) {
       const name = r.project ?? "(unattributed)";
       let b = m.get(name);
       if (!b) {
@@ -144,35 +186,39 @@ export function ProjectsView() {
     return [...m.values()].sort(
       (a, z) => z.features.length - a.features.length,
     );
-  }, [activity]);
+  }, [displayedActivity]);
 
   return (
-    <div className="space-y-5 p-4">
-      <header className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-lg font-semibold leading-tight">By project</h1>
-          <p className="text-xs text-muted-foreground">
-            Codebase size + shipped features per project, sourced from chaos.
-          </p>
-        </div>
-        <RangeTabs value={range} onChange={setRange} />
-      </header>
+    <div className={cn("space-y-5", className)}>
+      {showHeader ? (
+        <header className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold leading-tight">By project</h1>
+            <p className="text-xs text-muted-foreground">
+              Codebase size + shipped features per project, sourced from chaos.
+            </p>
+          </div>
+          {onRangeChange ? (
+            <RangeTabs value={range} onChange={onRangeChange} />
+          ) : null}
+        </header>
+      ) : null}
 
       <ProjectLocChart range={range} />
 
-      {activityErr ? (
+      {displayedActivityErr ? (
         <Card className="border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          Couldn&apos;t load activity: {activityErr}
+          Couldn&apos;t load activity: {displayedActivityErr}
         </Card>
       ) : null}
 
-      {!activity && activityLoading ? (
+      {!displayedActivity && displayedActivityLoading ? (
         <div className="py-10 text-center text-sm text-muted-foreground">
           Loading…
         </div>
       ) : null}
 
-      {activity && buckets.length === 0 ? (
+      {displayedActivity && buckets.length === 0 ? (
         <div className="py-6 text-center text-sm text-muted-foreground">
           No features in this window.
         </div>

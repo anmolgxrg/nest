@@ -7,7 +7,6 @@ import {
   CirclesFourIcon,
   ClockIcon,
   FileIcon,
-  FolderIcon,
   GearSixIcon,
   GitBranchIcon,
   KanbanIcon,
@@ -45,7 +44,6 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { AgentDetailsDialog } from "@/components/agent-details-dialog"
 import { OrgActivityView } from "@/components/chaos/org-activity-view"
-import { ProjectsView } from "@/components/chaos/projects-view"
 import { UserSdasView } from "@/components/chaos/user-sdas-view"
 import { JetsonAgentView } from "@/components/jetson-agent-view"
 import { SdmChartView } from "@/components/sdm-chart-view"
@@ -80,7 +78,6 @@ type SidebarFilter =
   | "sdms"
   | "chart"
   | "jetsonAgent"
-  | "projects"
   | "userSdas"
   | "orgActivity"
 
@@ -194,14 +191,12 @@ const sidebarFilters: {
   { id: "jetsonAgent", label: "Jetson agent", icon: TerminalWindowIcon },
   { id: "userSdas", label: "User SDAs", icon: TerminalWindowIcon },
   { id: "orgActivity", label: "Org activity", icon: PulseIcon },
-  { id: "projects", label: "By project", icon: FolderIcon },
 ]
 
 // Sidebar items that swap the main content for a chaos view rather than
 // filtering the in-memory agents list. These hide the search/group-by chrome
 // and don't compute counts.
 const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set([
-  "projects",
   "userSdas",
   "orgActivity",
   "jetsonAgent",
@@ -602,9 +597,7 @@ export function AgentKanbanApp() {
         <section className="flex min-h-0 flex-1 flex-col">
           {isChaosView ? (
             <ScrollArea className="min-h-0 flex-1">
-              {sidebarFilter === "projects" ? (
-                <ProjectsView />
-              ) : sidebarFilter === "orgActivity" ? (
+              {sidebarFilter === "orgActivity" ? (
                 <OrgActivityView />
               ) : sidebarFilter === "userSdas" ? (
                 <UserSdasView />
