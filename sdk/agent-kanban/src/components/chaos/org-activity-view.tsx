@@ -589,8 +589,8 @@ function ByPerson({
   }, [data]);
 
   const leaderboard = React.useMemo(
-    () => buildLeaderboard(data.people),
-    [data.people],
+    () => buildLeaderboard(data.people, rollupsByPerson),
+    [data.people, rollupsByPerson],
   );
   const team = leaderboard.filter((row) => !row.person.external);
   const others = leaderboard.filter((row) => row.person.external);
@@ -677,7 +677,7 @@ function ByPerson({
         <div className="grid min-w-[46rem] grid-cols-[3rem_minmax(0,1fr)_5rem_5rem_5rem_5rem_4rem] gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
           <div>Rank</div>
           <div>Person</div>
-          <div className="text-right">Commits</div>
+          <div className="text-right">Features</div>
           <div className="text-right">Added</div>
           <div className="text-right">Removed</div>
           <div className="text-right">Tickets</div>
@@ -704,35 +704,43 @@ function ByPerson({
 interface LeaderboardRow {
   person: Person;
   rank: number;
-  commits: number;
+  features: number;
   linesAdded: number;
   linesRemoved: number;
   ticketsClosed: number;
   score: number;
 }
 
-function buildLeaderboard(people: Person[]): LeaderboardRow[] {
-  const maxCommits = Math.max(0, ...people.map((p) => p.commitCount ?? 0));
+function buildLeaderboard(
+  people: Person[],
+  rollupsByPerson: Map<string, Rollup[]>,
+): LeaderboardRow[] {
+  const featureCount = (person: Person) => {
+    const rollups = rollupsByPerson.get(person.id) ?? [];
+    const keyedFeatures = rollups.filter((r) => r.featureKey).length;
+    return keyedFeatures + (person.significantAnonCommits ?? 0);
+  };
+  const maxFeatures = Math.max(0, ...people.map(featureCount));
   const maxAdded = Math.max(0, ...people.map((p) => p.linesAdded ?? 0));
   const maxRemoved = Math.max(0, ...people.map((p) => p.linesRemoved ?? 0));
   const maxTickets = Math.max(0, ...people.map((p) => p.ticketsClosed ?? 0));
 
   return people
     .map((person) => {
-      const commits = person.commitCount ?? 0;
+      const features = featureCount(person);
       const linesAdded = person.linesAdded ?? 0;
       const linesRemoved = person.linesRemoved ?? 0;
       const ticketsClosed = person.ticketsClosed ?? 0;
       const score =
         100 *
-        (0.3 * normalized(commits, maxCommits) +
+        (0.3 * normalized(features, maxFeatures) +
           0.3 * normalized(linesAdded, maxAdded) +
           0.15 * normalized(linesRemoved, maxRemoved) +
           0.25 * normalized(ticketsClosed, maxTickets));
       return {
         person,
         rank: 0,
-        commits,
+        features,
         linesAdded,
         linesRemoved,
         ticketsClosed,
@@ -741,7 +749,7 @@ function buildLeaderboard(people: Person[]): LeaderboardRow[] {
     })
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      if (b.commits !== a.commits) return b.commits - a.commits;
+      if (b.features !== a.features) return b.features - a.features;
       return b.linesAdded - a.linesAdded;
     })
     .map((row, index) => ({ ...row, rank: index + 1 }));
@@ -761,7 +769,7 @@ function LeaderboardPersonRow({
 }) {
   const isTop = row.rank === 1 && !row.person.external;
   const formula =
-    "Score = 30% commits + 30% lines added + 15% lines removed + 25% Jira tickets closed, log-normalized within this range.";
+    "Score = 30% features + 30% lines added + 15% lines removed + 25% Jira tickets closed, log-normalized within this range.";
   return (
     <button
       type="button"
@@ -799,7 +807,7 @@ function LeaderboardPersonRow({
           ) : null}
         </div>
       </div>
-      <div className="text-right text-xs tabular-nums">{row.commits}</div>
+      <div className="text-right text-xs tabular-nums">{row.features}</div>
       <div className="text-right text-xs tabular-nums">
         {formatLoc(row.linesAdded)}
       </div>
