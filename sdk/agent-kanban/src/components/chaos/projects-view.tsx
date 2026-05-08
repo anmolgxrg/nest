@@ -1,7 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { ArrowSquareOutIcon, GithubLogoIcon } from "@phosphor-icons/react";
+import {
+  ArrowClockwiseIcon,
+  ArrowSquareOutIcon,
+  GithubLogoIcon,
+} from "@phosphor-icons/react";
 import {
   Area,
   AreaChart,
@@ -43,6 +47,10 @@ const WEEKS_FOR_RANGE: Record<Range, number | "all"> = {
   "30d": 13,
   all: "all",
 };
+
+const LOC_REFRESH_STALE_MS = 15 * 60 * 1000;
+const LOC_REFRESH_POLL_MS = 8_000;
+const LOC_REFRESH_IDLE_POLL_MS = 60_000;
 
 const LOC_COLORS = [
   "#c15f3c", // terracotta
@@ -359,33 +367,54 @@ function ProjectLocChart({
 }) {
   const [data, setData] = React.useState<ProjectLocPayload | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const refreshNow = React.useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const d = await fetchProjectLoc(true);
+      setData(d);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   React.useEffect(() => {
     let live = true;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastForcedCachedAt: string | null = null;
 
-    async function load() {
+    function scheduleLoad(delay: number) {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(() => {
+        void load();
+      }, delay);
+    }
+
+    async function load(force = false) {
       try {
-        const r = await fetch("/api/chaos/project-stats", {
-          cache: "no-store",
-        });
-        const ct = r.headers.get("content-type") ?? "";
-        if (!ct.includes("application/json")) {
-          throw new Error(
-            `unexpected response (${r.status} ${ct || "no content-type"})`,
-          );
-        }
-        const d = (await r.json()) as ProjectLocPayload;
+        if (force) setRefreshing(true);
+        const d = await fetchProjectLoc(force);
         if (!live) return;
         setData(d);
         setErr(null);
-        // Cold start: chaos returns an empty payload with computing:true while
-        // the GitHub fan-out runs. Poll until cachedAt populates (~30–60s).
-        if (d.computing && d.weeks.length === 0) {
-          pollTimer = setTimeout(load, 8_000);
+        const stale = isProjectLocStale(d);
+        if (!force && stale && lastForcedCachedAt !== d.cachedAt) {
+          lastForcedCachedAt = d.cachedAt;
+          void load(true);
         }
+        scheduleLoad(
+          d.computing || stale
+            ? LOC_REFRESH_POLL_MS
+            : LOC_REFRESH_IDLE_POLL_MS,
+        );
       } catch (e) {
         if (live) setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (live && force) setRefreshing(false);
       }
     }
 
@@ -454,10 +483,11 @@ function ProjectLocChart({
     name: p.project,
     loc: p.points.at(-1)?.loc ?? 0,
   }));
+  const isRefreshing = refreshing || data.computing;
 
   return (
     <Card className="p-4">
-      <div className="mb-3 flex items-baseline justify-between">
+      <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-medium">Codebase size by project</div>
           <div className="text-xs text-muted-foreground">
@@ -465,14 +495,31 @@ function ProjectLocChart({
             {visibleWeeks.length === 1 ? "" : "s"}
           </div>
         </div>
-        <div className="text-xs text-muted-foreground">
-          {data.computing
-            ? "refreshing…"
-            : "updated " +
-              new Date(data.cachedAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-              })}
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="text-xs text-muted-foreground">
+            {isRefreshing
+              ? "refreshing…"
+              : "updated " +
+                new Date(data.cachedAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                })}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs"
+            onClick={() => void refreshNow()}
+            disabled={refreshing}
+            title="Refresh LOC history"
+          >
+            <ArrowClockwiseIcon
+              aria-hidden="true"
+              className={cn("size-3.5", refreshing ? "animate-spin" : "")}
+            />
+            LOC
+          </Button>
         </div>
       </div>
 
@@ -562,6 +609,27 @@ function ProjectLocChart({
       )}
     </Card>
   );
+}
+
+async function fetchProjectLoc(force: boolean): Promise<ProjectLocPayload> {
+  const path = force
+    ? "/api/chaos/project-stats?force=1"
+    : "/api/chaos/project-stats";
+  const r = await fetch(path, { cache: "no-store" });
+  const ct = r.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    throw new Error(
+      `unexpected response (${r.status} ${ct || "no content-type"})`,
+    );
+  }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()) as ProjectLocPayload;
+}
+
+function isProjectLocStale(data: ProjectLocPayload): boolean {
+  const cachedAt = new Date(data.cachedAt).getTime();
+  if (!Number.isFinite(cachedAt) || cachedAt <= 0) return data.computing;
+  return Date.now() - cachedAt >= LOC_REFRESH_STALE_MS;
 }
 
 interface TooltipItem {
