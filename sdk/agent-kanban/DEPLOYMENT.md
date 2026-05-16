@@ -1,6 +1,6 @@
 # Agent Kanban Deployment
 
-Production currently runs on `trc3` from `/srv/cookbook/sdk/agent-kanban` under
+Production currently runs on the migrated production server from `/srv/cookbook/sdk/agent-kanban` under
 the `agent-kanban` systemd unit. The working tree should stay on `main`.
 
 ## Required Gates
@@ -38,7 +38,7 @@ The database records:
 ## RBAC
 
 Authentication is still Cursor API-key based, but authorization is role based.
-Set these environment variables on `trc3` for shared-company use:
+Set these environment variables on the production server for shared-company use:
 
 ```bash
 NEST_ADMIN_EMAILS="founder@example.com,lead@example.com"
@@ -71,13 +71,13 @@ Set it to `0` only for manual sessions where a human can answer CLI prompts.
 ## Rollback
 
 Use the manual deploy workflow and set `rollback_ref` to a known-good commit on
-`main`. The workflow checks out `main` on `trc3`, resets it to that ref, runs the
+`main`. The workflow checks out `main` on the production server, resets it to that ref, runs the
 same gates, restarts `agent-kanban`, and health-checks `http://127.0.0.1:3210/`.
 
 Manual server fallback:
 
 ```bash
-ssh trc3
+ssh anmol@64.23.172.17
 cd /srv/cookbook
 git fetch origin --tags
 git checkout main
