@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic"
 export async function GET(request: Request) {
   try {
     const session = await requireRole(request, "viewer")
-    return Response.json({ models: await listModels(session.apiKey) })
+    const apiKey = session.apiKey?.trim()
+    return Response.json({ models: apiKey ? await listModels(apiKey) : [] })
   } catch (error) {
     return jsonError(error, "Failed to list models.")
   }

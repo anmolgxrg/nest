@@ -3,6 +3,7 @@ import {
   actorForSession,
   createCloudAgent,
   listCloudAgents,
+  requireCursorApiKey,
   requireRole,
 } from "@/lib/agents/server"
 import type { AgentCard, CreateAgentInput } from "@/lib/agents/types"
@@ -18,12 +19,15 @@ export async function GET(request: Request) {
   try {
     const session = await requireRole(request, "viewer")
     const url = new URL(request.url)
+    const apiKey = session.apiKey?.trim()
 
-    const response = await listCloudAgents(session.apiKey, {
-      cursor: url.searchParams.get("cursor") ?? undefined,
-      prUrl: url.searchParams.get("prUrl") ?? undefined,
-      includeArchived: url.searchParams.get("includeArchived") === "true",
-    })
+    const response = apiKey
+      ? await listCloudAgents(apiKey, {
+          cursor: url.searchParams.get("cursor") ?? undefined,
+          prUrl: url.searchParams.get("prUrl") ?? undefined,
+          includeArchived: url.searchParams.get("includeArchived") === "true",
+        }).catch(() => ({ agents: [] }))
+      : { agents: [] }
 
     return Response.json({
       ...response,
@@ -56,9 +60,10 @@ function jetsonLaunchToAgentCard(record: JetsonAgentLaunchRecord): AgentCard {
 export async function POST(request: Request) {
   try {
     const session = await requireRole(request, "operator")
+    const apiKey = requireCursorApiKey(session)
     const body = (await request.json()) as CreateAgentInput
     return Response.json(
-      await createCloudAgent(session.apiKey, body, actorForSession(session))
+      await createCloudAgent(apiKey, body, actorForSession(session))
     )
   } catch (error) {
     return jsonError(error, "Failed to create a cloud agent.")

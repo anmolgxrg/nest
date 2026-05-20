@@ -28,7 +28,7 @@ type Settings = {
 
 export type Session = {
   id: string
-  apiKey: string
+  apiKey?: string
   role: AppRole
   user: PublicUser | null
 }
@@ -163,6 +163,7 @@ export function publicSession(session: Session): PublicSession {
   return {
     id: session.id,
     user: session.user,
+    hasCursorApiKey: Boolean(session.apiKey?.trim()),
     hasPersistedKey: false,
     role: session.role,
     permissions: permissionsForRole(session.role),
@@ -220,7 +221,7 @@ export async function restoreSession(sessionId?: string): Promise<PublicSession>
   const settings = await readSettings()
   const persistedApiKey = settings.cursorApiKey?.trim()
   if (!persistedApiKey) {
-    throw new MissingCursorApiKeyError()
+    return publicSession(createLocalSession())
   }
 
   let user: PublicUser | null
@@ -231,7 +232,13 @@ export async function restoreSession(sessionId?: string): Promise<PublicSession>
     role = resolveRole(user)
   } catch (error) {
     if (!isCursorRateLimitError(error)) {
-      throw error
+      await writeSettings({
+        ...settings,
+        cursorApiKey: undefined,
+        cursorUser: null,
+        cursorRole: undefined,
+      }).catch(() => undefined)
+      return publicSession(createLocalSession())
     }
     user = settings.cursorUser ?? null
     role = isAppRole(settings.cursorRole) ? settings.cursorRole : resolveRole(user)
@@ -274,7 +281,12 @@ export async function requireSession(request: Request): Promise<Session> {
     request.headers.get("x-agent-kanban-session")?.trim() ??
     getCookie(request, "agent-kanban-session")?.trim()
   if (!sessionId) {
-    throw new MissingCursorApiKeyError()
+    const restored = await restoreSession()
+    const restoredSession = sessions.get(restored.id)
+    if (!restoredSession) {
+      throw new UnknownSessionError()
+    }
+    return restoredSession
   }
 
   const session = sessions.get(sessionId)
@@ -298,6 +310,16 @@ export async function requireRole(
   const session = await requireSession(request)
   assertRole(session.role, minimumRole)
   return session
+}
+
+export function requireCursorApiKey(session: Session): string {
+  const apiKey = session.apiKey?.trim()
+  if (!apiKey) {
+    throw new MissingCursorApiKeyError(
+      "Set a Cursor API key in Settings to use Cursor Cloud."
+    )
+  }
+  return apiKey
 }
 
 export function actorForSession(session: Session) {
@@ -354,6 +376,26 @@ function permissionsForRole(role: AppRole): AppPermissions {
     useJetsonAgent: roleRank[role] >= roleRank.operator,
     viewAgents: roleRank[role] >= roleRank.viewer,
   }
+}
+
+function createLocalSession(): Session {
+  const session: Session = {
+    id: randomUUID(),
+    role: localSessionRole(),
+    user: null,
+  }
+  sessions.set(session.id, session)
+  auditEvent({
+    actor: actorForSession(session),
+    action: "session.local",
+    resourceType: "session",
+    resourceId: session.id,
+  })
+  return session
+}
+
+function localSessionRole(): AppRole {
+  return envRole("NEST_LOCAL_ROLE", envRole("NEST_DEFAULT_ROLE", "operator"))
 }
 
 function resolveRole(user: PublicUser | null): AppRole {

@@ -117,11 +117,11 @@ export async function POST(request: Request) {
 }
 
 async function resolveRepository(
-  apiKey: string,
+  apiKey: string | undefined,
   body: JetsonLaunchRequest,
 ): Promise<RepositoryOption | null> {
   const repositoryId = body.repositoryId?.trim()
-  if (repositoryId) {
+  if (apiKey?.trim() && repositoryId) {
     const repositories = await listRepositories(apiKey).catch(() => [])
     const repository = repositories.find((option) => option.id === repositoryId)
     if (repository) {

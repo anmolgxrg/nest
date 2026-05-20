@@ -10,7 +10,6 @@ import {
   GearSixIcon,
   GitBranchIcon,
   KanbanIcon,
-  LinkIcon,
   MagnifyingGlassIcon,
   PlayIcon,
   PlusIcon,
@@ -155,7 +154,7 @@ function repoMatchesAgent(repo: Repo, agent: AgentCard): boolean {
   return false
 }
 
-type AppStatus = "checking" | "onboarding" | "ready"
+type AppStatus = "checking" | "ready"
 
 type ApiError = {
   code?: string
@@ -323,10 +322,10 @@ export function AgentKanbanApp() {
         setSession(restored)
         setStatus("ready")
         await loadBoard(restored.id, { includeStaticData: true })
-      } catch {
+      } catch (restoreError) {
         if (!cancelled) {
           window.localStorage.removeItem(sessionStorageKey)
-          setStatus("onboarding")
+          setError(errorMessage(restoreError, "Failed to start NEST."))
         }
       }
     }
@@ -400,11 +399,17 @@ export function AgentKanbanApp() {
   async function handleForgetKey() {
     window.localStorage.removeItem(sessionStorageKey)
     await fetch("/api/session", { method: "DELETE" })
-    setSession(null)
+    const restored = await fetchJson<PublicSession>("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+    window.localStorage.setItem(sessionStorageKey, restored.id)
+    setSession(restored)
     setAgents([])
     setRepositories([])
     setModels([])
-    setStatus("onboarding")
+    await loadBoard(restored.id, { includeStaticData: true })
   }
 
   async function handleAgentCreated(agent: AgentCard) {
@@ -426,8 +431,8 @@ export function AgentKanbanApp() {
     return <LoadingScreen />
   }
 
-  if (status === "onboarding" || !session) {
-    return <OnboardingScreen onSessionCreated={handleSessionCreated} />
+  if (!session) {
+    return <LoadingScreen error={error} />
   }
 
   const searchedAgents = searchAgents(agents, query)
@@ -447,10 +452,13 @@ export function AgentKanbanApp() {
   const groups = isReposView
     ? []
     : groupAgents(visibleAgents, selectedGroupBy)
-  const signedInName = session.user?.name ?? "Cursor user"
+  const signedInName =
+    session.user?.name ?? (session.hasCursorApiKey ? "Cursor user" : "Local NEST")
   const signedInLabel = session.user?.email
     ? `${signedInName} (${session.user.email})`
-    : signedInName
+    : session.hasCursorApiKey
+      ? signedInName
+      : "Cursor Cloud not connected"
   const signedInInitial = signedInName.trim().charAt(0).toUpperCase() || "C"
   const signedInRole =
     session.role.charAt(0).toUpperCase() + session.role.slice(1)
@@ -605,6 +613,22 @@ export function AgentKanbanApp() {
           )}
         </header>
 
+        {!session.hasCursorApiKey ? (
+          <div className="flex items-center justify-between gap-3 border-b bg-muted/30 px-4 py-2 text-sm text-muted-foreground">
+            <span>
+              Cursor Cloud is disconnected. Jetson and activity views stay available.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsSettingsOpen(true)}
+            >
+              <GearSixIcon data-icon="inline-start" />
+              Set key
+            </Button>
+          </div>
+        ) : null}
+
         {error && !isChaosView ? (
           <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
             {error}
@@ -680,6 +704,7 @@ export function AgentKanbanApp() {
       {isCreateOpen && session.permissions.createAgents ? (
         <CreateAgentDialog
           sessionId={session.id}
+          hasCursorApiKey={session.hasCursorApiKey}
           models={models}
           repositories={repositories}
           initialRepositoryId={createForRepoId ?? undefined}
@@ -701,6 +726,7 @@ export function AgentKanbanApp() {
 
       {isSettingsOpen ? (
         <SettingsDialog
+          session={session}
           signedInName={signedInName}
           signedInLabel={signedInLabel}
           signedInInitial={signedInInitial}
@@ -711,6 +737,7 @@ export function AgentKanbanApp() {
           canManageRouting={session.permissions.manageRouting}
           onClose={() => setIsSettingsOpen(false)}
           onForgetKey={handleForgetKey}
+          onSessionUpdated={handleSessionCreated}
           onRefreshRepos={loadRepos}
         />
       ) : null}
@@ -719,6 +746,7 @@ export function AgentKanbanApp() {
 }
 
 function SettingsDialog({
+  session,
   signedInName,
   signedInLabel,
   signedInInitial,
@@ -729,8 +757,10 @@ function SettingsDialog({
   canManageRouting,
   onClose,
   onForgetKey,
+  onSessionUpdated,
   onRefreshRepos,
 }: {
+  session: PublicSession
   signedInName: string
   signedInLabel: string
   signedInInitial: string
@@ -741,13 +771,41 @@ function SettingsDialog({
   canManageRouting: boolean
   onClose: () => void
   onForgetKey: () => Promise<void>
+  onSessionUpdated: (session: PublicSession) => Promise<void>
   onRefreshRepos: () => Promise<void>
 }) {
+  const [apiKey, setApiKey] = React.useState("")
+  const [savingKey, setSavingKey] = React.useState(false)
   const [forgetting, setForgetting] = React.useState(false)
+  const [keyError, setKeyError] = React.useState<string | null>(null)
 
   async function handleForgetKey() {
     setForgetting(true)
-    await onForgetKey()
+    setKeyError(null)
+    try {
+      await onForgetKey()
+    } finally {
+      setForgetting(false)
+    }
+  }
+
+  async function handleSaveKey(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSavingKey(true)
+    setKeyError(null)
+    try {
+      const nextSession = await fetchJson<PublicSession>("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey, remember: true }),
+      })
+      setApiKey("")
+      await onSessionUpdated(nextSession)
+    } catch (saveError) {
+      setKeyError(errorMessage(saveError, "Unable to save the Cursor API key."))
+    } finally {
+      setSavingKey(false)
+    }
   }
 
   return (
@@ -804,15 +862,45 @@ function SettingsDialog({
                   </div>
                 </div>
               </div>
+              <form
+                className="mt-3 rounded-lg border bg-background p-3"
+                onSubmit={handleSaveKey}
+              >
+                <label className="flex flex-col gap-1.5 text-sm font-medium">
+                  Cursor API key
+                  <Input
+                    type="password"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder="crsr_..."
+                    autoComplete="off"
+                    aria-invalid={Boolean(keyError)}
+                  />
+                </label>
+                {keyError ? (
+                  <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {keyError}
+                  </div>
+                ) : null}
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="mt-3 w-full justify-start"
+                  disabled={!apiKey.trim() || savingKey}
+                >
+                  <GearSixIcon data-icon="inline-start" />
+                  {savingKey ? "Saving..." : "Save Cursor key"}
+                </Button>
+              </form>
               <Button
                 variant="destructive"
                 size="sm"
                 className="mt-3 w-full justify-start"
                 onClick={() => void handleForgetKey()}
-                disabled={forgetting}
+                disabled={forgetting || !session.hasCursorApiKey}
               >
                 <SignOutIcon data-icon="inline-start" />
-                {forgetting ? "Forgetting..." : "Forget API key"}
+                {forgetting ? "Forgetting..." : "Forget Cursor key"}
               </Button>
             </aside>
 
@@ -832,102 +920,21 @@ function SettingsDialog({
   )
 }
 
-function LoadingScreen() {
+function LoadingScreen({ error }: { error?: string | null }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Loading NEST</CardTitle>
-          <CardDescription>Checking for a saved Cursor API key.</CardDescription>
+          <CardDescription>Starting the workspace.</CardDescription>
         </CardHeader>
-      </Card>
-    </div>
-  )
-}
-
-function OnboardingScreen({
-  onSessionCreated,
-}: {
-  onSessionCreated: (session: PublicSession) => Promise<void>
-}) {
-  const [apiKey, setApiKey] = React.useState("")
-  const [rememberKey, setRememberKey] = React.useState(true)
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      const session = await fetchJson<PublicSession>("/api/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, remember: rememberKey }),
-      })
-      await onSessionCreated(session)
-    } catch (submitError) {
-      setError(errorMessage(submitError, "Unable to validate the API key."))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
-      <Card className="w-full max-w-sm border bg-card shadow-xl">
-        <CardHeader className="gap-1">
-          <CardTitle>Connect Cursor</CardTitle>
-          <CardDescription>
-            Enter an API key to load your cloud agents.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
-            <label className="flex flex-col gap-1.5 text-sm font-medium">
-              API key
-              <Input
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="crsr_..."
-                autoComplete="off"
-                aria-invalid={Boolean(error)}
-              />
-            </label>
-            <label className="flex items-start gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                className="mt-0.5 size-4 accent-primary"
-                checked={rememberKey}
-                onChange={(event) => setRememberKey(event.target.checked)}
-              />
-              <span>
-                Remember this key on this machine at{" "}
-                <code className="rounded bg-muted px-1 py-0.5">~/.agent-kanban</code>.
-              </span>
-            </label>
-            {error ? (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
-            <Button type="submit" disabled={!apiKey.trim() || isSubmitting}>
-              {isSubmitting ? "Validating..." : "Continue"}
-            </Button>
-          </form>
-        </CardContent>
-        <CardFooter className="justify-end text-xs text-muted-foreground">
-          <a
-            className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
-            href="https://cursor.com/dashboard/integrations"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Get key
-            <LinkIcon aria-hidden="true" className="size-3.5" />
-          </a>
-        </CardFooter>
+        {error ? (
+          <CardContent>
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          </CardContent>
+        ) : null}
       </Card>
     </div>
   )
@@ -1756,6 +1763,7 @@ function ArtifactTile({ artifact }: { artifact: AgentCard["artifacts"][number] }
 
 function CreateAgentDialog({
   sessionId,
+  hasCursorApiKey,
   repositories,
   models,
   initialRepositoryId,
@@ -1763,6 +1771,7 @@ function CreateAgentDialog({
   onCreated,
 }: {
   sessionId: string
+  hasCursorApiKey: boolean
   repositories: RepositoryOption[]
   models: ModelOption[]
   initialRepositoryId?: string
@@ -1771,7 +1780,9 @@ function CreateAgentDialog({
 }) {
   const [name, setName] = React.useState("")
   const [prompt, setPrompt] = React.useState("")
-  const [runtime, setRuntime] = React.useState<AgentRuntime>("cursor")
+  const [runtime, setRuntime] = React.useState<AgentRuntime>(
+    hasCursorApiKey ? "cursor" : "jetson",
+  )
   const [repositoryId, setRepositoryId] = React.useState(
     initialRepositoryId ?? repositories[0]?.id ?? "",
   )
@@ -1878,7 +1889,9 @@ function CreateAgentDialog({
                 </SelectTrigger>
                 <SelectContent align="start">
                   <SelectGroup>
-                    <SelectItem value="cursor">Cursor Cloud</SelectItem>
+                    <SelectItem value="cursor" disabled={!hasCursorApiKey}>
+                      Cursor Cloud
+                    </SelectItem>
                     <SelectItem value="jetson">Jetson</SelectItem>
                   </SelectGroup>
                 </SelectContent>
@@ -1988,7 +2001,12 @@ function CreateAgentDialog({
               </label>
             ) : null}
 
-            {repositories.length === 0 && !isJetsonRuntime ? (
+            {!hasCursorApiKey && !isJetsonRuntime ? (
+              <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                Add a Cursor API key in Settings before creating Cursor Cloud
+                agents.
+              </div>
+            ) : repositories.length === 0 && !isJetsonRuntime ? (
               <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                 No repositories were returned by the SDK. Check your Cursor and
                 GitHub integration permissions.

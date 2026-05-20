@@ -15,6 +15,7 @@ export type AppPermissions = {
 export type PublicSession = {
   id: string
   user: PublicUser | null
+  hasCursorApiKey: boolean
   hasPersistedKey: boolean
   role: AppRole
   permissions: AppPermissions
