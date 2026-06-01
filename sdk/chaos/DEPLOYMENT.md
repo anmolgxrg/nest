@@ -24,8 +24,8 @@ Production keeps those files outside git:
 /etc/chaos/config/sources.yaml
 ```
 
-The deploy workflow creates these from the previous `/opt/chaos` deployment
-only when the `/etc/chaos` files do not already exist.
+The deploy workflow requires both files to already exist on `trc4`; they are
+not copied from retired standalone deployments.
 
 Chaos stores its SQLite database in the `chaos-data` Docker volume mounted at
 `/app/data`.

@@ -87,13 +87,8 @@ jobs:
           fi
 
           sudo mkdir -p /etc/chaos/config
-          if [ ! -f /etc/chaos/chaos.env ] && [ -f /opt/chaos/.env ]; then
-            sudo cp /opt/chaos/.env /etc/chaos/chaos.env
-            sudo chmod 600 /etc/chaos/chaos.env
-          fi
-          if [ ! -f /etc/chaos/config/sources.yaml ] && [ -f /opt/chaos/config/sources.yaml ]; then
-            sudo cp /opt/chaos/config/sources.yaml /etc/chaos/config/sources.yaml
-          fi
+          sudo test -f /etc/chaos/chaos.env
+          sudo test -f /etc/chaos/config/sources.yaml
 
           cd /srv/nest/sdk/chaos
           sudo ln -sfn /etc/chaos/chaos.env .env
