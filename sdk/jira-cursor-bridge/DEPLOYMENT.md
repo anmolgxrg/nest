@@ -1,7 +1,7 @@
 # Jira Cursor Bridge Deployment
 
-The bridge now lives in `cookbook` at `sdk/jira-cursor-bridge`. Production runs
-on `trc4` from `/srv/cookbook/sdk/jira-cursor-bridge` under the
+The bridge now lives in the NEST repo at `sdk/jira-cursor-bridge`. Production runs
+on `trc4` from `/srv/nest/sdk/jira-cursor-bridge` under the
 `jira-cursor-bridge` systemd unit.
 
 ## Required Gates
@@ -31,7 +31,7 @@ Use `.github/workflows/jira-cursor-bridge-deploy.yml`, or run the same commands
 manually on `trc4`:
 
 ```bash
-cd /srv/cookbook
+cd /srv/nest
 git fetch origin --tags
 git checkout main
 git pull --ff-only origin main
@@ -48,10 +48,10 @@ curl -fsS http://127.0.0.1:8787/healthz >/dev/null
 
 ## Rollback
 
-Roll back the cookbook ref, reinstall dependencies, and restart the service:
+Roll back the NEST ref, reinstall dependencies, and restart the service:
 
 ```bash
-cd /srv/cookbook
+cd /srv/nest
 git fetch origin --tags
 git checkout main
 git reset --hard <known-good-ref>

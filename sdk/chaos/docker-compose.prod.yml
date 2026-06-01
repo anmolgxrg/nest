@@ -1,4 +1,4 @@
-# Production override for the cookbook monorepo deployment.
+# Production override for the NEST monorepo deployment.
 #
 # The base compose file is kept useful for local development. Production
 # keeps secrets and source routing outside git under /etc/chaos.

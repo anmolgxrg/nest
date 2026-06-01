@@ -46,9 +46,21 @@ export interface ProjectSeries {
   project: string;
   points: { date: string; loc: number }[];
 }
+export interface WeeklyLocContributor {
+  personId: string;
+  displayName: string;
+  githubLogin: string | null;
+  additions: number;
+}
+export interface WeeklyLocThroughputPoint {
+  date: string;
+  additions: number;
+  contributors: WeeklyLocContributor[];
+}
 export interface ProjectLocPayload {
   projects: ProjectSeries[];
   weeks: string[];
+  weeklyThroughput: WeeklyLocThroughputPoint[];
   cachedAt: string;
   computing: boolean;
 }

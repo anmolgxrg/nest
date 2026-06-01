@@ -1,7 +1,7 @@
 # Chaos Deployment
 
-Chaos now lives in `cookbook` at `sdk/chaos`. Production runs on `trc4` from
-`/srv/cookbook/sdk/chaos` as a Docker Compose service named `chaos`.
+Chaos now lives in the NEST repo at `sdk/chaos`. Production runs on `trc4` from
+`/srv/nest/sdk/chaos` as a Docker Compose service named `chaos`.
 
 ## Required Gates
 
@@ -36,7 +36,7 @@ Use `.github/workflows/chaos-deploy.yml`, or run the same commands manually on
 `trc4`:
 
 ```bash
-cd /srv/cookbook
+cd /srv/nest
 git fetch origin --tags
 git checkout main
 git pull --ff-only origin main
@@ -50,10 +50,10 @@ curl -fsS -H "Authorization: Bearer $(sudo sed -n 's/^CHAOS_TELEMETRY_TOKEN=//p'
 
 ## Rollback
 
-Roll back the cookbook ref, then rebuild the Compose service:
+Roll back the NEST ref, then rebuild the Compose service:
 
 ```bash
-cd /srv/cookbook
+cd /srv/nest
 git fetch origin --tags
 git checkout main
 git reset --hard <known-good-ref>

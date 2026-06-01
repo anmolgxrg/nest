@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/cookbook/sdk/jira-cursor-bridge
+WorkingDirectory=/srv/nest/sdk/jira-cursor-bridge
 EnvironmentFile=/etc/jira-cursor-bridge.env
 ExecStart=/usr/bin/node --import tsx src/index.ts
 Restart=on-failure

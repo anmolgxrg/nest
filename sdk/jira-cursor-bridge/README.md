@@ -5,7 +5,7 @@ The Software Delivery Manager — a webhook-driven bridge from Jira to Cursor Cl
 When a Jira ticket gets the configured trigger label, SDM spawns a Cursor Cloud Agent against the GitHub repo mapped to that ticket's project key (or the default fallback repo). The agent opens a PR; a background watcher enables auto-merge (squash); on conflict it comments back on the Jira ticket.
 
 SDM is the bridge service, not a UI. The agents it creates show up live in
-**NEST** at `sdk/agent-kanban` in this cookbook repo.
+**NEST** at `sdk/agent-kanban` in this NEST repo.
 
 ## Install
 

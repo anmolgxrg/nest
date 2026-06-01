@@ -11,7 +11,7 @@ import { prisma } from "./db";
 import { loadSources, githubToken } from "./config";
 import { ALL_TIME_ORIGIN } from "./time";
 
-const CACHE_KEY = "project-loc-series-v5";
+export const PROJECT_LOC_CACHE_KEY = "project-loc-series-v6";
 const TTL_MS = 24 * 60 * 60 * 1000;
 // Backend returns the full all-time window (from ALL_TIME_ORIGIN) and the
 // frontend slices it based on the selected time-range tab.
@@ -22,9 +22,21 @@ export interface ProjectSeries {
   project: string;
   points: { date: string; loc: number }[]; // cumulative LOC at the week-ending date
 }
+export interface WeeklyLocContributor {
+  personId: string;
+  displayName: string;
+  githubLogin: string | null;
+  additions: number;
+}
+export interface WeeklyLocThroughputPoint {
+  date: string;
+  additions: number;
+  contributors: WeeklyLocContributor[];
+}
 export interface ProjectLocPayload {
   projects: ProjectSeries[];
   weeks: string[];
+  weeklyThroughput: WeeklyLocThroughputPoint[];
   cachedAt: string;
   computing: boolean;
 }
@@ -39,9 +51,9 @@ async function computeAndCache(): Promise<ProjectLocPayload> {
     try {
       const fresh = await compute();
       await prisma.cache.upsert({
-        where: { key: CACHE_KEY },
+        where: { key: PROJECT_LOC_CACHE_KEY },
         create: {
-          key: CACHE_KEY,
+          key: PROJECT_LOC_CACHE_KEY,
           value: JSON.stringify(fresh),
           updatedAt: new Date(),
         },
@@ -63,7 +75,9 @@ async function computeAndCache(): Promise<ProjectLocPayload> {
  * keeps the request well under nginx's proxy_read_timeout.
  */
 export async function getProjectLoc(force = false): Promise<ProjectLocPayload> {
-  const cached = await prisma.cache.findUnique({ where: { key: CACHE_KEY } });
+  const cached = await prisma.cache.findUnique({
+    where: { key: PROJECT_LOC_CACHE_KEY },
+  });
 
   if (force) {
     return computeAndCache();
@@ -89,6 +103,7 @@ export async function getProjectLoc(force = false): Promise<ProjectLocPayload> {
   return {
     projects: [],
     weeks: [],
+    weeklyThroughput: [],
     cachedAt: new Date(0).toISOString(),
     computing: true,
   };
@@ -101,6 +116,7 @@ async function compute(): Promise<ProjectLocPayload> {
     return {
       projects: [],
       weeks: [],
+      weeklyThroughput: [],
       cachedAt: new Date().toISOString(),
       computing: false,
     };
@@ -144,6 +160,12 @@ async function compute(): Promise<ProjectLocPayload> {
   const canonicalWeeks = buildWeekListBetween(sinceIso, WEEKS_BUFFER);
 
   const projects: ProjectSeries[] = [];
+  const peopleByLogin = buildPeopleLookup(cfg.people);
+  const throughputByWeek = new Map<
+    string,
+    Map<string, WeeklyLocContributor>
+  >();
+  const countedThroughputCommits = new Set<string>();
 
   for (const [project, repos] of projectToRepos) {
     const perRepo = await Promise.all(
@@ -158,6 +180,13 @@ async function compute(): Promise<ProjectLocPayload> {
       for (const c of recent) {
         const w = weekEnding(c.date);
         weekNet.set(w, (weekNet.get(w) ?? 0) + c.net);
+        recordWeeklyThroughput({
+          commit: c,
+          week: w,
+          peopleByLogin,
+          throughputByWeek,
+          countedThroughputCommits,
+        });
       }
       const cum = new Map<string, number>();
       let running = baseline;
@@ -184,12 +213,23 @@ async function compute(): Promise<ProjectLocPayload> {
   }
 
   const weeks = canonicalWeeks;
+  const weeklyThroughput = canonicalWeeks.map((date) => {
+    const contributors = [...(throughputByWeek.get(date)?.values() ?? [])]
+      .sort((a, z) => z.additions - a.additions)
+      .map((c) => ({ ...c }));
+    return {
+      date,
+      additions: contributors.reduce((sum, c) => sum + c.additions, 0),
+      contributors,
+    };
+  });
 
   return {
     projects: projects.sort(
       (a, z) => (z.points.at(-1)?.loc ?? 0) - (a.points.at(-1)?.loc ?? 0),
     ),
     weeks,
+    weeklyThroughput,
     cachedAt: new Date().toISOString(),
     computing: false,
   };
@@ -225,7 +265,13 @@ function weekEnding(iso: string): string {
 }
 
 interface CommitDiff {
+  owner: string;
+  name: string;
+  oid: string;
   date: string;
+  additions: number;
+  authorLogin: string | null;
+  authorName: string | null;
   net: number; // additions - deletions
 }
 
@@ -246,7 +292,13 @@ async function fetchCommitDiffs(
     if (!history) break;
     for (const n of history.nodes ?? []) {
       recent.push({
+        owner,
+        name,
+        oid: n.oid,
         date: n.committedDate as string,
+        additions: n.additions ?? 0,
+        authorLogin: n.author?.user?.login ?? null,
+        authorName: n.author?.name ?? null,
         net: (n.additions ?? 0) - (n.deletions ?? 0),
       });
     }
@@ -281,7 +333,13 @@ async function gqlHistory(
   name: string,
   opts: { since?: string; until?: string; after?: string | null },
 ): Promise<{
-  nodes?: { committedDate: string; additions: number; deletions: number }[];
+  nodes?: {
+    oid: string;
+    committedDate: string;
+    additions: number;
+    deletions: number;
+    author?: { name?: string | null; user?: { login?: string | null } | null };
+  }[];
   pageInfo?: { hasNextPage: boolean; endCursor: string };
 } | null> {
   const frags: string[] = [];
@@ -300,7 +358,7 @@ async function gqlHistory(
     repository(owner:$owner,name:$name){
       defaultBranchRef{ target{ ... on Commit {
         history(first:100, after:$cursor${extraFrag}){
-          nodes{ committedDate additions deletions }
+          nodes{ oid committedDate additions deletions author{ name user{ login } } }
           pageInfo{ hasNextPage endCursor }
         }
       }}}
@@ -336,4 +394,88 @@ async function gqlHistory(
   } catch {
     return null;
   }
+}
+
+function buildPeopleLookup(
+  people: ReturnType<typeof loadSources>["people"],
+): Map<string, { displayName: string; githubLogin: string | null }> {
+  const byLogin = new Map<
+    string,
+    { displayName: string; githubLogin: string | null }
+  >();
+  for (const person of people) {
+    const entry = {
+      displayName: person.display_name,
+      githubLogin: person.github ?? null,
+    };
+    if (person.github) byLogin.set(person.github.toLowerCase(), entry);
+    for (const alias of person.github_aliases ?? []) {
+      byLogin.set(alias.toLowerCase(), entry);
+    }
+  }
+  return byLogin;
+}
+
+function resolveContributor(
+  commit: CommitDiff,
+  peopleByLogin: Map<string, { displayName: string; githubLogin: string | null }>,
+): Omit<WeeklyLocContributor, "additions"> {
+  const login = commit.authorLogin?.trim() || null;
+  if (login) {
+    const configured = peopleByLogin.get(login.toLowerCase());
+    if (configured) {
+      return {
+        personId: `github:${configured.githubLogin ?? login}`.toLowerCase(),
+        displayName: configured.displayName,
+        githubLogin: configured.githubLogin ?? login,
+      };
+    }
+    return {
+      personId: `github:${login}`.toLowerCase(),
+      displayName: commit.authorName?.trim() || login,
+      githubLogin: login,
+    };
+  }
+
+  const name = commit.authorName?.trim() || "Unknown";
+  return {
+    personId: `name:${name.toLowerCase()}`,
+    displayName: name,
+    githubLogin: null,
+  };
+}
+
+function recordWeeklyThroughput({
+  commit,
+  week,
+  peopleByLogin,
+  throughputByWeek,
+  countedThroughputCommits,
+}: {
+  commit: CommitDiff;
+  week: string;
+  peopleByLogin: Map<
+    string,
+    { displayName: string; githubLogin: string | null }
+  >;
+  throughputByWeek: Map<string, Map<string, WeeklyLocContributor>>;
+  countedThroughputCommits: Set<string>;
+}) {
+  // Throughput counts default-branch additions only: deleted lines are ignored,
+  // because this panel answers "how much code reached production this week".
+  if (commit.additions <= 0) return;
+  const commitKey = `${commit.owner}/${commit.name}:${commit.oid}`;
+  if (countedThroughputCommits.has(commitKey)) return;
+  countedThroughputCommits.add(commitKey);
+
+  const contributor = resolveContributor(commit, peopleByLogin);
+  const contributors =
+    throughputByWeek.get(week) ?? new Map<string, WeeklyLocContributor>();
+  const current = contributors.get(contributor.personId) ?? {
+    ...contributor,
+    additions: 0,
+  };
+  current.additions += commit.additions;
+  contributors.set(contributor.personId, current);
+  throughputByWeek.set(week, contributors);
 }

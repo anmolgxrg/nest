@@ -26,6 +26,7 @@ import type {
   ProjectLocPayload,
   Range,
   Rollup,
+  WeeklyLocThroughputPoint,
 } from "./types";
 
 const CHAOS_PUBLIC_URL = "https://chaos.reasoning.company";
@@ -644,6 +645,11 @@ function ProjectLocChart({
         </ResponsiveContainer>
       </div>
 
+      <WeeklyLocThroughputPanel
+        weeks={visibleWeeks}
+        throughput={data.weeklyThroughput ?? []}
+      />
+
       <Separator className="my-3" />
 
       {footer !== undefined ? (
@@ -786,6 +792,164 @@ function LocTooltip({
         <span>total</span>
         <span className="tabular-nums">{formatLoc(total)}</span>
       </div>
+    </div>
+  );
+}
+
+function WeeklyLocThroughputPanel({
+  weeks,
+  throughput,
+}: {
+  weeks: string[];
+  throughput: WeeklyLocThroughputPoint[];
+}) {
+  const points = React.useMemo(() => {
+    const byWeek = new Map(throughput.map((p) => [p.date, p]));
+    return weeks.map(
+      (date) =>
+        byWeek.get(date) ?? {
+          date,
+          additions: 0,
+          contributors: [],
+        },
+    );
+  }, [throughput, weeks]);
+
+  const contributorTotals = React.useMemo(() => {
+    const totals = new Map<
+      string,
+      {
+        personId: string;
+        displayName: string;
+        githubLogin: string | null;
+        additions: number;
+      }
+    >();
+    for (const point of points) {
+      for (const contributor of point.contributors) {
+        const current = totals.get(contributor.personId) ?? {
+          personId: contributor.personId,
+          displayName: contributor.displayName,
+          githubLogin: contributor.githubLogin,
+          additions: 0,
+        };
+        current.additions += contributor.additions;
+        totals.set(contributor.personId, current);
+      }
+    }
+    return [...totals.values()].sort((a, z) => z.additions - a.additions);
+  }, [points]);
+
+  const colorByPerson = React.useMemo(() => {
+    const colors = new Map<string, string>();
+    contributorTotals.forEach((person, index) => {
+      colors.set(person.personId, LOC_COLORS[index % LOC_COLORS.length]);
+    });
+    return colors;
+  }, [contributorTotals]);
+
+  const maxWeek = Math.max(1, ...points.map((point) => point.additions));
+  const total = points.reduce((sum, point) => sum + point.additions, 0);
+  const latest = points.at(-1)?.additions ?? 0;
+
+  return (
+    <div className="mt-4 rounded-md border bg-background/35 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Weekly LOC throughput</div>
+          <div className="text-xs text-muted-foreground">
+            Default-branch additions that reached production; deletions
+            excluded.
+          </div>
+        </div>
+        <div className="text-right text-xs">
+          <div className="font-medium tabular-nums">
+            {formatLoc(total)} added
+          </div>
+          <div className="text-muted-foreground tabular-nums">
+            latest {formatLoc(latest)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 overflow-x-auto pb-1">
+        <div
+          className="grid min-w-[480px] items-end gap-2"
+          style={{
+            gridTemplateColumns: `repeat(${Math.max(points.length, 1)}, minmax(44px, 1fr))`,
+          }}
+        >
+          {points.map((point) => {
+            const height = point.additions
+              ? Math.max(6, (point.additions / maxWeek) * 100)
+              : 0;
+            return (
+              <div
+                key={point.date}
+                className="flex min-w-0 flex-col items-center gap-1"
+              >
+                <div className="h-4 max-w-full truncate text-[10px] tabular-nums text-muted-foreground">
+                  {point.additions ? formatLoc(point.additions) : "0"}
+                </div>
+                <div className="flex h-24 w-full max-w-10 items-end rounded-sm bg-muted/50">
+                  {point.additions ? (
+                    <div
+                      className="flex w-full flex-col-reverse overflow-hidden rounded-sm"
+                      style={{ height: `${height}%` }}
+                      title={`${formatDate(point.date)}: ${formatLoc(point.additions)} LOC added`}
+                    >
+                      {point.contributors.map((contributor) => (
+                        <div
+                          key={contributor.personId}
+                          style={{
+                            height: `${(contributor.additions / point.additions) * 100}%`,
+                            backgroundColor:
+                              colorByPerson.get(contributor.personId) ??
+                              LOC_COLORS[0],
+                          }}
+                          title={`${contributor.displayName}: ${formatLoc(contributor.additions)} LOC added`}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="max-w-full truncate text-[10px] text-muted-foreground">
+                  {formatDate(point.date)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {contributorTotals.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {contributorTotals.slice(0, 8).map((person) => (
+            <div key={person.personId} className="flex items-center gap-1.5">
+              <span
+                className="size-2 rounded-full"
+                style={{
+                  backgroundColor:
+                    colorByPerson.get(person.personId) ?? LOC_COLORS[0],
+                }}
+              />
+              <span className="max-w-32 truncate">{person.displayName}</span>
+              <span className="tabular-nums text-muted-foreground">
+                {formatLoc(person.additions)}
+              </span>
+            </div>
+          ))}
+          {contributorTotals.length > 8 ? (
+            <span className="text-muted-foreground">
+              +{contributorTotals.length - 8} more
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-3 text-xs text-muted-foreground">
+          No production additions in this window.
+        </div>
+      )}
     </div>
   );
 }

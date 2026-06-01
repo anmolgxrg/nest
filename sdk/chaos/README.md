@@ -6,7 +6,7 @@ rollups, not raw commit history.
 
 Built for small teams (<10 people), full-company visibility, no per-user auth.
 
-Chaos now lives inside the cookbook monorepo at `sdk/chaos`. Production
+Chaos now lives inside the NEST monorepo at `sdk/chaos`. Production
 deployment is documented in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## What's different about this fork

@@ -77,7 +77,7 @@ jobs:
           TARGET_REF="$1"
           ROLLBACK_REF="$2"
 
-          cd /srv/cookbook
+          cd /srv/nest
           git fetch origin --tags
           git checkout main
           if [ -n "${ROLLBACK_REF:-}" ]; then

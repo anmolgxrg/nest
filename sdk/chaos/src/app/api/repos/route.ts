@@ -3,6 +3,7 @@ import YAML from "yaml";
 import { NextResponse } from "next/server";
 import { configPath, loadSources } from "@/lib/config";
 import { prisma } from "@/lib/db";
+import { PROJECT_LOC_CACHE_KEY } from "@/lib/project-loc";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,8 +26,6 @@ type RepoInput = {
   name?: string;
   jiraProjectKey?: string | null;
 };
-
-const PROJECT_LOC_CACHE_KEY = "project-loc-series-v4";
 
 export async function GET() {
   const cfg = loadSources();

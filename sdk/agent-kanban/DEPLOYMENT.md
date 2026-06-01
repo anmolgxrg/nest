@@ -1,9 +1,9 @@
 # Agent Kanban Deployment
 
-Production currently runs on `trc4` from `/srv/cookbook/sdk/agent-kanban` under
+Production currently runs on `trc4` from `/srv/nest/sdk/agent-kanban` under
 the `agent-kanban` systemd unit. The working tree should stay on `main`.
 
-NEST now shares the cookbook repo with its two backend services:
+NEST now shares this repo with its two backend services:
 
 - `sdk/chaos` provides org activity, telemetry, Jira/GitHub ingestion, and
   project LOC APIs.
@@ -121,7 +121,7 @@ Manual server fallback:
 
 ```bash
 ssh trc4
-cd /srv/cookbook
+cd /srv/nest
 git fetch origin --tags
 git checkout main
 git reset --hard <known-good-ref>

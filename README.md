@@ -1,7 +1,7 @@
-# Cursor Cookbook
+# NEST
 
-This repo contains small examples for building with Cursor, plus the internal
-NEST platform services that run the Cursor/Jira/Chaos workflow.
+This repo contains the internal NEST platform services that run the
+Cursor/Jira/Chaos workflow, plus small examples for building with Cursor.
 
 ## Cursor SDK
 

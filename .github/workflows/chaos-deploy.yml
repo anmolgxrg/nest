@@ -77,7 +77,7 @@ jobs:
           TARGET_REF="$1"
           ROLLBACK_REF="$2"
 
-          cd /srv/cookbook
+          cd /srv/nest
           git fetch origin --tags
           git checkout main
           if [ -n "${ROLLBACK_REF:-}" ]; then
@@ -95,7 +95,7 @@ jobs:
             sudo cp /opt/chaos/config/sources.yaml /etc/chaos/config/sources.yaml
           fi
 
-          cd /srv/cookbook/sdk/chaos
+          cd /srv/nest/sdk/chaos
           sudo ln -sfn /etc/chaos/chaos.env .env
           sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build chaos
 
