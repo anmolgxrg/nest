@@ -441,9 +441,12 @@ function resolveContributor(
         githubLogin: configured.githubLogin ?? login,
       };
     }
+    const name = commit.authorName?.trim();
     return {
-      personId: `github:${login}`.toLowerCase(),
-      displayName: commit.authorName?.trim() || login,
+      personId: name
+        ? `name:${normalizeIdentityKey(name)}`
+        : `github:${login}`.toLowerCase(),
+      displayName: name || login,
       githubLogin: login,
     };
   }
@@ -498,6 +501,9 @@ function recordWeeklyThroughput({
     ...contributor,
     additions: 0,
   };
+  if (!current.githubLogin && contributor.githubLogin) {
+    current.githubLogin = contributor.githubLogin;
+  }
   current.additions += commit.additions;
   contributors.set(contributor.personId, current);
   throughputByWeek.set(week, contributors);
