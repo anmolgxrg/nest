@@ -160,7 +160,7 @@ async function compute(): Promise<ProjectLocPayload> {
   const canonicalWeeks = buildWeekListBetween(sinceIso, WEEKS_BUFFER);
 
   const projects: ProjectSeries[] = [];
-  const peopleByLogin = buildPeopleLookup(cfg.people);
+  const peopleLookup = buildPeopleLookup(cfg.people);
   const throughputByWeek = new Map<
     string,
     Map<string, WeeklyLocContributor>
@@ -183,7 +183,7 @@ async function compute(): Promise<ProjectLocPayload> {
         recordWeeklyThroughput({
           commit: c,
           week: w,
-          peopleByLogin,
+          peopleLookup,
           throughputByWeek,
           countedThroughputCommits,
         });
@@ -398,8 +398,15 @@ async function gqlHistory(
 
 function buildPeopleLookup(
   people: ReturnType<typeof loadSources>["people"],
-): Map<string, { displayName: string; githubLogin: string | null }> {
+): {
+  byLogin: Map<string, { displayName: string; githubLogin: string | null }>;
+  byName: Map<string, { displayName: string; githubLogin: string | null }>;
+} {
   const byLogin = new Map<
+    string,
+    { displayName: string; githubLogin: string | null }
+  >();
+  const byName = new Map<
     string,
     { displayName: string; githubLogin: string | null }
   >();
@@ -408,21 +415,25 @@ function buildPeopleLookup(
       displayName: person.display_name,
       githubLogin: person.github ?? null,
     };
+    byName.set(normalizeIdentityKey(person.display_name), entry);
     if (person.github) byLogin.set(person.github.toLowerCase(), entry);
     for (const alias of person.github_aliases ?? []) {
       byLogin.set(alias.toLowerCase(), entry);
+      byName.set(normalizeIdentityKey(alias), entry);
     }
   }
-  return byLogin;
+  return { byLogin, byName };
 }
 
 function resolveContributor(
   commit: CommitDiff,
-  peopleByLogin: Map<string, { displayName: string; githubLogin: string | null }>,
+  peopleLookup: ReturnType<typeof buildPeopleLookup>,
 ): Omit<WeeklyLocContributor, "additions"> {
   const login = commit.authorLogin?.trim() || null;
   if (login) {
-    const configured = peopleByLogin.get(login.toLowerCase());
+    const configured =
+      peopleLookup.byLogin.get(login.toLowerCase()) ??
+      peopleLookup.byName.get(normalizeIdentityKey(login));
     if (configured) {
       return {
         personId: `github:${configured.githubLogin ?? login}`.toLowerCase(),
@@ -438,26 +449,38 @@ function resolveContributor(
   }
 
   const name = commit.authorName?.trim() || "Unknown";
+  const configured = peopleLookup.byName.get(normalizeIdentityKey(name));
+  if (configured) {
+    return {
+      personId: configured.githubLogin
+        ? `github:${configured.githubLogin}`.toLowerCase()
+        : `name:${normalizeIdentityKey(configured.displayName)}`,
+      displayName: configured.displayName,
+      githubLogin: configured.githubLogin,
+    };
+  }
+
   return {
-    personId: `name:${name.toLowerCase()}`,
+    personId: `name:${normalizeIdentityKey(name)}`,
     displayName: name,
     githubLogin: null,
   };
 }
 
+function normalizeIdentityKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function recordWeeklyThroughput({
   commit,
   week,
-  peopleByLogin,
+  peopleLookup,
   throughputByWeek,
   countedThroughputCommits,
 }: {
   commit: CommitDiff;
   week: string;
-  peopleByLogin: Map<
-    string,
-    { displayName: string; githubLogin: string | null }
-  >;
+  peopleLookup: ReturnType<typeof buildPeopleLookup>;
   throughputByWeek: Map<string, Map<string, WeeklyLocContributor>>;
   countedThroughputCommits: Set<string>;
 }) {
@@ -468,7 +491,7 @@ function recordWeeklyThroughput({
   if (countedThroughputCommits.has(commitKey)) return;
   countedThroughputCommits.add(commitKey);
 
-  const contributor = resolveContributor(commit, peopleByLogin);
+  const contributor = resolveContributor(commit, peopleLookup);
   const contributors =
     throughputByWeek.get(week) ?? new Map<string, WeeklyLocContributor>();
   const current = contributors.get(contributor.personId) ?? {

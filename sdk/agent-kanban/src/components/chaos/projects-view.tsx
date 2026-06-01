@@ -803,6 +803,12 @@ function WeeklyLocThroughputPanel({
   weeks: string[];
   throughput: WeeklyLocThroughputPoint[];
 }) {
+  const [tooltip, setTooltip] = React.useState<{
+    point: WeeklyLocThroughputPoint;
+    x: number;
+    y: number;
+  } | null>(null);
+
   const points = React.useMemo(() => {
     const byWeek = new Map(throughput.map((p) => [p.date, p]));
     return weeks.map(
@@ -852,6 +858,23 @@ function WeeklyLocThroughputPanel({
   const total = points.reduce((sum, point) => sum + point.additions, 0);
   const latest = points.at(-1)?.additions ?? 0;
 
+  const showTooltip = React.useCallback(
+    (point: WeeklyLocThroughputPoint, clientX: number, clientY: number) => {
+      const width = 280;
+      const gutter = 12;
+      const viewportWidth = document.documentElement.clientWidth || width;
+      setTooltip({
+        point,
+        x: Math.max(
+          gutter,
+          Math.min(clientX + 14, viewportWidth - width - gutter),
+        ),
+        y: Math.max(gutter, clientY + 14),
+      });
+    },
+    [],
+  );
+
   return (
     <div className="mt-4 rounded-md border bg-background/35 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -872,7 +895,7 @@ function WeeklyLocThroughputPanel({
         </div>
       </div>
 
-      <div className="mt-3 overflow-x-auto pb-1">
+      <div className="mt-3 overflow-x-auto pb-1" onScroll={() => setTooltip(null)}>
         <div
           className="grid min-w-[480px] items-end gap-2"
           style={{
@@ -884,9 +907,23 @@ function WeeklyLocThroughputPanel({
               ? Math.max(6, (point.additions / maxWeek) * 100)
               : 0;
             return (
-              <div
+              <button
                 key={point.date}
-                className="flex min-w-0 flex-col items-center gap-1"
+                type="button"
+                className="flex min-w-0 cursor-default flex-col items-center gap-1 rounded-sm bg-transparent p-0 text-inherit outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                aria-label={`${formatDate(point.date)}: ${formatLoc(point.additions)} LOC added`}
+                onMouseEnter={(event) =>
+                  showTooltip(point, event.clientX, event.clientY)
+                }
+                onMouseMove={(event) =>
+                  showTooltip(point, event.clientX, event.clientY)
+                }
+                onMouseLeave={() => setTooltip(null)}
+                onFocus={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  showTooltip(point, rect.left + rect.width / 2, rect.top);
+                }}
+                onBlur={() => setTooltip(null)}
               >
                 <div className="h-4 max-w-full truncate text-[10px] tabular-nums text-muted-foreground">
                   {point.additions ? formatLoc(point.additions) : "0"}
@@ -896,7 +933,6 @@ function WeeklyLocThroughputPanel({
                     <div
                       className="flex w-full flex-col-reverse overflow-hidden rounded-sm"
                       style={{ height: `${height}%` }}
-                      title={`${formatDate(point.date)}: ${formatLoc(point.additions)} LOC added`}
                     >
                       {point.contributors.map((contributor) => (
                         <div
@@ -907,7 +943,6 @@ function WeeklyLocThroughputPanel({
                               colorByPerson.get(contributor.personId) ??
                               LOC_COLORS[0],
                           }}
-                          title={`${contributor.displayName}: ${formatLoc(contributor.additions)} LOC added`}
                         />
                       ))}
                     </div>
@@ -916,38 +951,87 @@ function WeeklyLocThroughputPanel({
                 <div className="max-w-full truncate text-[10px] text-muted-foreground">
                   {formatDate(point.date)}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
       </div>
 
-      {contributorTotals.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          {contributorTotals.slice(0, 8).map((person) => (
-            <div key={person.personId} className="flex items-center gap-1.5">
-              <span
-                className="size-2 rounded-full"
-                style={{
-                  backgroundColor:
-                    colorByPerson.get(person.personId) ?? LOC_COLORS[0],
-                }}
-              />
-              <span className="max-w-32 truncate">{person.displayName}</span>
-              <span className="tabular-nums text-muted-foreground">
-                {formatLoc(person.additions)}
+      {tooltip ? (
+        <WeeklyLocThroughputTooltip
+          point={tooltip.point}
+          x={tooltip.x}
+          y={tooltip.y}
+          colorByPerson={colorByPerson}
+        />
+      ) : null}
+
+      {contributorTotals.length === 0 ? (
+        <div className="mt-3 text-xs text-muted-foreground">
+          No production additions in this window.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WeeklyLocThroughputTooltip({
+  point,
+  x,
+  y,
+  colorByPerson,
+}: {
+  point: WeeklyLocThroughputPoint;
+  x: number;
+  y: number;
+  colorByPerson: Map<string, string>;
+}) {
+  const visibleContributors = point.contributors.slice(0, 12);
+
+  return (
+    <div
+      className="pointer-events-none fixed z-50 w-[17.5rem] rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-xl"
+      style={{ left: x, top: y }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="font-medium">{formatDate(point.date)}</div>
+        <div className="tabular-nums text-muted-foreground">
+          {formatLoc(point.additions)} LOC
+        </div>
+      </div>
+
+      {visibleContributors.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {visibleContributors.map((contributor) => (
+            <div
+              key={contributor.personId}
+              className="flex items-center justify-between gap-3"
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className="size-2 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor:
+                      colorByPerson.get(contributor.personId) ??
+                      LOC_COLORS[0],
+                  }}
+                />
+                <span className="truncate">{contributor.displayName}</span>
+              </div>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {formatLoc(contributor.additions)}
               </span>
             </div>
           ))}
-          {contributorTotals.length > 8 ? (
-            <span className="text-muted-foreground">
-              +{contributorTotals.length - 8} more
-            </span>
+          {point.contributors.length > visibleContributors.length ? (
+            <div className="text-muted-foreground">
+              +{point.contributors.length - visibleContributors.length} more
+            </div>
           ) : null}
         </div>
       ) : (
-        <div className="mt-3 text-xs text-muted-foreground">
-          No production additions in this window.
+        <div className="mt-2 text-muted-foreground">
+          No production additions this week.
         </div>
       )}
     </div>

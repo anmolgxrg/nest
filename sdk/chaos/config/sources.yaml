@@ -39,6 +39,7 @@ jira:
 people:
   - display_name: Anmol Garg
     github: anmolgxrg
+    github_aliases: [ayeva-dev]
     jira_account_id: "712020:c8e7e85b-61ca-4a33-8353-4983cae472c1"
   - display_name: Kavan Patel
     github: Kavan9090
