@@ -163,6 +163,9 @@ type ApiError = {
 
 const sessionStorageKey = "agent-kanban-session-id"
 const sidebarFilterStorageKey = "agent-kanban-sidebar-filter"
+const sidebarDefaultVersionStorageKey = "agent-kanban-sidebar-default-version"
+const sidebarDefaultVersion = "org-activity-first-v1"
+const defaultSidebarFilter: SidebarFilter = "orgActivity"
 const defaultGroupBy: GroupBy = "status"
 const autoRefreshMs = 30_000
 
@@ -186,11 +189,11 @@ const sidebarFilters: {
   label: string
   icon: IconComponent
 }[] = [
+  { id: "orgActivity", label: "Org activity", icon: PulseIcon },
   { id: "sdms", label: "SDMs", icon: UsersThreeIcon },
   { id: "chart", label: "Chart", icon: CirclesFourIcon },
   { id: "jetsonAgent", label: "Jetson agent", icon: TerminalWindowIcon },
   { id: "userSdas", label: "Human SDMs", icon: TerminalWindowIcon },
-  { id: "orgActivity", label: "Org activity", icon: PulseIcon },
 ]
 
 // Sidebar items that swap the main content for a chaos view rather than
@@ -204,9 +207,20 @@ const CHAOS_FILTERS: ReadonlySet<SidebarFilter> = new Set([
 ])
 
 function readStoredSidebarFilter(): SidebarFilter {
-  if (typeof window === "undefined") return "sdms"
+  if (typeof window === "undefined") return defaultSidebarFilter
+  const defaultVersion = window.localStorage.getItem(
+    sidebarDefaultVersionStorageKey,
+  )
+  if (defaultVersion !== sidebarDefaultVersion) {
+    window.localStorage.setItem(
+      sidebarDefaultVersionStorageKey,
+      sidebarDefaultVersion,
+    )
+    window.localStorage.setItem(sidebarFilterStorageKey, defaultSidebarFilter)
+    return defaultSidebarFilter
+  }
   const stored = window.localStorage.getItem(sidebarFilterStorageKey)
-  return isSidebarFilter(stored) ? stored : "sdms"
+  return isSidebarFilter(stored) ? stored : defaultSidebarFilter
 }
 
 function isSidebarFilter(value: unknown): value is SidebarFilter {

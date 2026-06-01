@@ -905,7 +905,7 @@ function WeeklyLocThroughputPanel({
 
       <div
         ref={scrollRef}
-        className="mt-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="scrollbar-hidden mt-3 overflow-x-auto pb-1"
         onScroll={() => setTooltip(null)}
       >
         <div
