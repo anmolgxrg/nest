@@ -35,6 +35,7 @@ export interface RawPrActivity {
   labels: string[];
   headRef: string;
   baseRef: string;
+  mergeCommitSha: string | null;
 }
 
 function buildClient(token: string) {
@@ -133,6 +134,7 @@ export async function fetchPullRequestsSince(
         labels: (pr.labels || []).map((l) => (typeof l === "string" ? l : l.name ?? "")).filter(Boolean),
         headRef: pr.head.ref,
         baseRef: pr.base.ref,
+        mergeCommitSha: pr.merge_commit_sha ?? null,
       });
     }
     if (resp.data.length < 100) break;
@@ -140,6 +142,75 @@ export async function fetchPullRequestsSince(
     if (page > 10) break;
   }
   return out;
+}
+
+export async function fetchMergedPullRequestCommitsSince(
+  cfg: Sources,
+  owner: string,
+  repo: string,
+  prs: RawPrActivity[],
+  since: Date,
+): Promise<RawCommitActivity[]> {
+  const token = githubToken(cfg);
+  if (!token) return [];
+  const gh = buildClient(token);
+
+  const out: RawCommitActivity[] = [];
+  for (const pr of prs) {
+    if (!pr.merged || !pr.mergedAt || pr.mergedAt < since) continue;
+
+    let page = 1;
+    while (true) {
+      const resp = await gh.pulls.listCommits({
+        owner,
+        repo,
+        pull_number: pr.number,
+        per_page: 100,
+        page,
+      });
+      if (resp.data.length === 0) break;
+
+      for (const c of resp.data) {
+        out.push({
+          kind: "commit",
+          sha: c.sha,
+          owner,
+          repo,
+          message: c.commit.message,
+          authorLogin: c.author?.login ?? null,
+          authorName: c.commit.author?.name ?? null,
+          branch: pr.headRef,
+          defaultBranch: pr.baseRef,
+          url: c.html_url,
+          // For merged PR commits, this dashboard is measuring shipped code,
+          // so bucket the commit under the date it reached the base branch.
+          occurredAt: pr.mergedAt,
+          associatedPrNumber: pr.number,
+          associatedPrTitle: pr.title,
+        });
+      }
+
+      if (resp.data.length < 100) break;
+      page += 1;
+      if (page > 20) break;
+    }
+  }
+
+  return out;
+}
+
+export function mergeRawCommitActivities(
+  defaultBranchCommits: RawCommitActivity[],
+  pullRequestCommits: RawCommitActivity[],
+): RawCommitActivity[] {
+  const bySha = new Map<string, RawCommitActivity>();
+  for (const commit of defaultBranchCommits) bySha.set(commit.sha, commit);
+
+  // Prefer PR-associated rows. They carry the PR number/title and the merge
+  // timestamp, which is the moment the code actually shipped.
+  for (const commit of pullRequestCommits) bySha.set(commit.sha, commit);
+
+  return [...bySha.values()];
 }
 
 export function resolvePersonByGithubLogin(

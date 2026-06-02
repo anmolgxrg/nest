@@ -2,7 +2,9 @@ import { prisma } from "./db";
 import { loadSources, type PersonConfig } from "./config";
 import {
   fetchCommitsSince,
+  fetchMergedPullRequestCommitsSince,
   fetchPullRequestsSince,
+  mergeRawCommitActivities,
   resolvePersonByGithubLogin,
   type RawCommitActivity,
   type RawPrActivity,
@@ -66,10 +68,18 @@ export async function runSync(): Promise<SyncResult> {
           fetchCommitsSince(cfg, repo.owner, repo.name, since),
           fetchPullRequestsSince(cfg, repo.owner, repo.name, since),
         ]);
+        const prCommits = await fetchMergedPullRequestCommitsSince(
+          cfg,
+          repo.owner,
+          repo.name,
+          prs,
+          since,
+        );
+        const mergedCommits = mergeRawCommitActivities(commits, prCommits);
         const prByHead = new Map<string, RawPrActivity>();
         for (const pr of prs) prByHead.set(pr.headRef, pr);
 
-        for (const c of commits) {
+        for (const c of mergedCommits) {
           if (c.authorLogin && excludeLogins.has(c.authorLogin.toLowerCase())) continue;
           activitiesWritten += await writeCommitActivity(cfg.people, c, prByHead);
         }
@@ -333,7 +343,11 @@ async function writeCommitActivity(
       }),
       featureKey,
     },
-    update: { featureKey },
+    update: {
+      personId: dbPerson.id,
+      occurredAt: c.occurredAt,
+      featureKey,
+    },
   });
   return 1;
 }

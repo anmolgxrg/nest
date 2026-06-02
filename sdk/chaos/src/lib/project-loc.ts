@@ -10,8 +10,9 @@
 import { prisma } from "./db";
 import { loadSources, githubToken } from "./config";
 import { ALL_TIME_ORIGIN } from "./time";
+import { shouldCountCommitLoc } from "./commit-loc";
 
-export const PROJECT_LOC_CACHE_KEY = "project-loc-series-v6";
+export const PROJECT_LOC_CACHE_KEY = "project-loc-series-v7";
 const TTL_MS = 24 * 60 * 60 * 1000;
 // Backend returns the full all-time window (from ALL_TIME_ORIGIN) and the
 // frontend slices it based on the selected time-range tab.
@@ -276,12 +277,15 @@ function weekEnding(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-interface CommitDiff {
+export interface CommitDiff {
   owner: string;
   name: string;
   oid: string;
+  title: string | null;
   date: string;
   additions: number;
+  deletions: number;
+  parentCount: number;
   authorLogin: string | null;
   authorName: string | null;
   net: number; // additions - deletions
@@ -294,7 +298,7 @@ async function fetchCommitDiffs(
   sinceIso: string,
 ): Promise<{ recent: CommitDiff[]; baseline: number }> {
   // Pass 1: commits *within* the window, paginated.
-  const recent: CommitDiff[] = [];
+  const historyCommits: CommitDiff[] = [];
   let cursor: string | null = null;
   for (let i = 0; i < 20; i++) {
     const history = await gqlHistory(token, owner, name, {
@@ -303,12 +307,15 @@ async function fetchCommitDiffs(
     });
     if (!history) break;
     for (const n of history.nodes ?? []) {
-      recent.push({
+      historyCommits.push({
         owner,
         name,
         oid: n.oid,
+        title: n.messageHeadline ?? null,
         date: n.committedDate as string,
         additions: n.additions ?? 0,
+        deletions: n.deletions ?? 0,
+        parentCount: n.parents?.totalCount ?? 0,
         authorLogin: n.author?.user?.login ?? null,
         authorName: n.author?.name ?? null,
         net: (n.additions ?? 0) - (n.deletions ?? 0),
@@ -317,6 +324,18 @@ async function fetchCommitDiffs(
     if (!history.pageInfo?.hasNextPage) break;
     cursor = history.pageInfo.endCursor;
   }
+
+  const mergedPrDiffs = await fetchMergedPullRequestCommitDiffs(
+    token,
+    owner,
+    name,
+    sinceIso,
+  );
+  const recent = mergeProjectLocCommits(
+    historyCommits,
+    mergedPrDiffs.commits,
+    mergedPrDiffs.mergeCommitShas,
+  );
 
   // Pass 2: baseline = sum of net diffs for everything BEFORE the window.
   // Using GraphQL's `until:` filter so we only get out-of-window commits and
@@ -339,6 +358,226 @@ async function fetchCommitDiffs(
   return { recent, baseline };
 }
 
+export function mergeProjectLocCommits(
+  historyCommits: CommitDiff[],
+  pullRequestCommits: CommitDiff[],
+  mergeCommitShas: Set<string>,
+): CommitDiff[] {
+  const bySha = new Map<string, CommitDiff>();
+  for (const commit of historyCommits) {
+    if (mergeCommitShas.has(commit.oid)) continue;
+    if (!shouldCountProjectCommit(commit)) continue;
+    bySha.set(commit.oid, commit);
+  }
+
+  // PR commits replace matching history rows so a merged PR lands on the merge
+  // week, not on the branch commit's older author/commit date.
+  for (const commit of pullRequestCommits) {
+    if (!shouldCountProjectCommit(commit)) continue;
+    bySha.set(commit.oid, commit);
+  }
+
+  return [...bySha.values()].sort((a, z) => a.date.localeCompare(z.date));
+}
+
+function shouldCountProjectCommit(commit: CommitDiff): boolean {
+  return shouldCountCommitLoc({
+    title: commit.title,
+    metadata: { parentCount: commit.parentCount },
+  });
+}
+
+async function fetchMergedPullRequestCommitDiffs(
+  token: string,
+  owner: string,
+  name: string,
+  sinceIso: string,
+): Promise<{ commits: CommitDiff[]; mergeCommitShas: Set<string> }> {
+  const since = new Date(sinceIso);
+  const commitsBySha = new Map<string, CommitDiff>();
+  const mergeCommitShas = new Set<string>();
+
+  for (let page = 1; page <= 20; page += 1) {
+    const pulls = await githubJson<
+      {
+        number?: number;
+        title?: string;
+        updated_at?: string;
+        merged_at?: string | null;
+        merge_commit_sha?: string | null;
+      }[]
+    >(
+      token,
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(
+        name,
+      )}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`,
+    );
+    if (!pulls || pulls.length === 0) break;
+
+    for (const pr of pulls) {
+      const updatedAt = pr.updated_at ? new Date(pr.updated_at) : null;
+      if (updatedAt && updatedAt < since) {
+        return { commits: [...commitsBySha.values()], mergeCommitShas };
+      }
+
+      if (typeof pr.number !== "number" || !pr.merged_at) continue;
+      const mergedAt = new Date(pr.merged_at);
+      if (!Number.isFinite(mergedAt.getTime()) || mergedAt < since) continue;
+
+      if (pr.merge_commit_sha) mergeCommitShas.add(pr.merge_commit_sha);
+
+      const shas = await fetchPullRequestCommitShas(
+        token,
+        owner,
+        name,
+        pr.number,
+      );
+      if (shas.length === 0) continue;
+
+      const commitMap = await fetchCommitDiffBatch(token, owner, name, shas);
+      for (const sha of shas) {
+        const commit = commitMap.get(sha);
+        if (!commit) continue;
+        commitsBySha.set(sha, {
+          ...commit,
+          date: mergedAt.toISOString(),
+        });
+      }
+    }
+  }
+
+  return { commits: [...commitsBySha.values()], mergeCommitShas };
+}
+
+async function fetchPullRequestCommitShas(
+  token: string,
+  owner: string,
+  name: string,
+  pullNumber: number,
+): Promise<string[]> {
+  const shas: string[] = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const commits = await githubJson<{ sha?: string }[]>(
+      token,
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(
+        name,
+      )}/pulls/${pullNumber}/commits?per_page=100&page=${page}`,
+    );
+    if (!commits || commits.length === 0) break;
+    for (const commit of commits) {
+      if (commit.sha) shas.push(commit.sha);
+    }
+    if (commits.length < 100) break;
+  }
+  return shas;
+}
+
+async function fetchCommitDiffBatch(
+  token: string,
+  owner: string,
+  name: string,
+  shas: string[],
+): Promise<Map<string, CommitDiff>> {
+  const out = new Map<string, CommitDiff>();
+  const unique = [...new Set(shas)];
+  for (let start = 0; start < unique.length; start += 50) {
+    const chunk = unique.slice(start, start + 50);
+    const fields = chunk
+      .map(
+        (sha, index) => `c${index}: object(oid:${JSON.stringify(sha)}){
+          ... on Commit {
+            oid
+            committedDate
+            messageHeadline
+            additions
+            deletions
+            parents { totalCount }
+            author { name user { login } }
+          }
+        }`,
+      )
+      .join("\n");
+    const query = `query($owner:String!,$name:String!){
+      repository(owner:$owner,name:$name){
+        ${fields}
+      }
+    }`;
+
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": "chaos/0.1",
+        },
+        body: JSON.stringify({ query, variables: { owner, name } }),
+      });
+      if (!resp.ok) continue;
+      const body = (await resp.json()) as {
+        data?: { repository?: Record<string, unknown> };
+      };
+      const repo = body.data?.repository;
+      if (!repo) continue;
+
+      for (let i = 0; i < chunk.length; i += 1) {
+        const node = repo[`c${i}`] as
+          | {
+              oid?: string;
+              committedDate?: string;
+              messageHeadline?: string | null;
+              additions?: number;
+              deletions?: number;
+              parents?: { totalCount?: number };
+              author?: {
+                name?: string | null;
+                user?: { login?: string | null } | null;
+              };
+            }
+          | null
+          | undefined;
+        if (!node?.oid || !node.committedDate) continue;
+        const additions = node.additions ?? 0;
+        const deletions = node.deletions ?? 0;
+        out.set(node.oid, {
+          owner,
+          name,
+          oid: node.oid,
+          title: node.messageHeadline ?? null,
+          date: node.committedDate,
+          additions,
+          deletions,
+          parentCount: node.parents?.totalCount ?? 0,
+          authorLogin: node.author?.user?.login ?? null,
+          authorName: node.author?.name ?? null,
+          net: additions - deletions,
+        });
+      }
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+async function githubJson<T>(token: string, url: string): Promise<T | null> {
+  try {
+    const resp = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "chaos/0.1",
+      },
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 async function gqlHistory(
   token: string,
   owner: string,
@@ -348,8 +587,10 @@ async function gqlHistory(
   nodes?: {
     oid: string;
     committedDate: string;
+    messageHeadline?: string | null;
     additions: number;
     deletions: number;
+    parents?: { totalCount?: number };
     author?: { name?: string | null; user?: { login?: string | null } | null };
   }[];
   pageInfo?: { hasNextPage: boolean; endCursor: string };
@@ -370,7 +611,7 @@ async function gqlHistory(
     repository(owner:$owner,name:$name){
       defaultBranchRef{ target{ ... on Commit {
         history(first:100, after:$cursor${extraFrag}){
-          nodes{ oid committedDate additions deletions author{ name user{ login } } }
+          nodes{ oid committedDate messageHeadline additions deletions parents{ totalCount } author{ name user{ login } } }
           pageInfo{ hasNextPage endCursor }
         }
       }}}
